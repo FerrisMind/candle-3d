@@ -55,6 +55,7 @@ class FixedTorchRand:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture Pi3X VO Python baseline artifacts.")
     parser.add_argument("--repo-root", type=str, default=None)
+    parser.add_argument("--raw-model-dir", type=str, required=True)
     parser.add_argument("--sample-id", type=str, required=True)
     parser.add_argument("--sample-kind", choices=["golden", "smoke"], required=True)
     parser.add_argument("--source", type=str, required=True)
@@ -83,9 +84,10 @@ def main() -> None:
     device = select_device(args.device)
     if args.interval < 0:
         args.interval = 10 if str(args.source).lower().endswith(".mp4") else 1
+    raw_model_dir = Path(args.raw_model_dir).resolve()
 
-    weight_path = repo_root / "3d" / "models" / "yyfz233-Pi3X" / "model.safetensors"
-    config_path = repo_root / "3d" / "models" / "yyfz233-Pi3X" / "config.json"
+    weight_path = raw_model_dir / "model.safetensors"
+    config_path = raw_model_dir / "config.json"
     config = json.loads(config_path.read_text(encoding="utf-8"))
 
     model = Pi3X(**config).to(device).eval()
@@ -168,7 +170,7 @@ def main() -> None:
         "sample_id": args.sample_id,
         "sample_kind": args.sample_kind,
         "source_path": str(Path(args.source).resolve()),
-        "weight_files": [str(weight_path.resolve()), str(config_path.resolve())],
+        "weight_files": [weight_path.name, config_path.name],
         "device": device,
         "sampled_frames": int(imgs.shape[1]),
         "interval": args.interval,
@@ -222,7 +224,7 @@ def main() -> None:
         "source_path": str(Path(args.source).resolve()),
         "light_root": str(light_root.resolve()),
         "heavy_root": str(heavy_root.resolve()) if args.sample_kind == "golden" else None,
-        "weight_files": [str(weight_path.resolve()), str(config_path.resolve())],
+        "weight_files": [weight_path.name, config_path.name],
         "tensor_artifacts": tensor_artifacts if args.sample_kind == "golden" else [],
         "geometry_summary": geometry_summary,
         "summary_relpath": relative_to(summary_path, light_root),

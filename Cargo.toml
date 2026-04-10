@@ -22,7 +22,9 @@ anyhow = "1.0.100"
 candle-core = { version = "0.10.2", features = ["cuda"] }
 candle-nn = { version = "0.10.2", features = ["cuda"] }
 clap = { version = "4.5.54", features = ["derive", "wrap_help"] }
+dirs = "6.0.0"
 fs2 = "0.4.3"
+hf-hub = { version = "0.5.0", default-features = false, features = ["ureq"] }
 image = "0.25.10"
 safetensors = "0.7.0"
 serde = { version = "1.0.228", features = ["derive"] }

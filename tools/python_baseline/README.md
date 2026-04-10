@@ -40,13 +40,13 @@ python -m venv --system-site-packages <triposr-env>
 Golden:
 
 ```powershell
-<pi3-env>/Scripts/python.exe tools/python_baseline/pi3_dump.py --repo-root <runtime-root> --sample-id house-golden --sample-kind golden --source <pi3-input>
+<pi3-env>/Scripts/python.exe tools/python_baseline/pi3_dump.py --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --sample-id house-golden --sample-kind golden --source <pi3-input>
 ```
 
 Smoke:
 
 ```powershell
-<pi3-env>/Scripts/python.exe tools/python_baseline/pi3_dump.py --repo-root <runtime-root> --sample-id skating-smoke --sample-kind smoke --source <pi3-video>
+<pi3-env>/Scripts/python.exe tools/python_baseline/pi3_dump.py --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --sample-id skating-smoke --sample-kind smoke --source <pi3-video>
 ```
 
 ### Pi3X
@@ -54,13 +54,13 @@ Smoke:
 Golden core:
 
 ```powershell
-python tools/python_baseline/pi3x_dump.py --repo-root <runtime-root> --sample-id room-golden --sample-kind golden --source <pi3x-input> --conditions <pi3x-conditions> --device auto
+python tools/python_baseline/pi3x_dump.py --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --sample-id room-golden --sample-kind golden --source <pi3x-input> --conditions <pi3x-conditions> --device auto
 ```
 
 Golden VO:
 
 ```powershell
-python tools/python_baseline/pi3x_vo_dump.py --repo-root <runtime-root> --sample-id skating-vo-golden --sample-kind golden --source <pi3x-video> --chunk-size 8 --overlap 4 --device auto
+python tools/python_baseline/pi3x_vo_dump.py --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --sample-id skating-vo-golden --sample-kind golden --source <pi3x-video> --chunk-size 8 --overlap 4 --device auto
 ```
 
 ### TripoSR
@@ -68,13 +68,13 @@ python tools/python_baseline/pi3x_vo_dump.py --repo-root <runtime-root> --sample
 Golden:
 
 ```powershell
-<triposr-env>/Scripts/python.exe tools/python_baseline/triposr_dump.py --repo-root <runtime-root> --sample-id horse-golden --sample-kind golden --source <triposr-input>
+<triposr-env>/Scripts/python.exe tools/python_baseline/triposr_dump.py --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --sample-id horse-golden --sample-kind golden --source <triposr-input>
 ```
 
 Smoke:
 
 ```powershell
-<triposr-env>/Scripts/python.exe tools/python_baseline/triposr_dump.py --repo-root <runtime-root> --sample-id chair-smoke --sample-kind smoke --source <triposr-smoke-input>
+<triposr-env>/Scripts/python.exe tools/python_baseline/triposr_dump.py --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --sample-id chair-smoke --sample-kind smoke --source <triposr-smoke-input>
 ```
 
 ## Output Layout

@@ -2,12 +2,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use candle_core::{DType, Device};
+use lux3d_core::ModelFamily;
 use lux3d_core::runtime::{Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline};
-use lux3d_core::test_support::GpuTestLock;
+use lux3d_core::test_support::{GpuTestLock, model_asset_options, runtime_root};
 use serde_json::Value;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(r"H:\GitHub\LuxRT")
+    runtime_root()
 }
 
 fn accel_device() -> Device {
@@ -74,7 +75,8 @@ fn max_abs_delta(actual: &candle_core::Tensor, expected: &candle_core::Tensor) -
 #[test]
 fn pi3x_preprocess_matches_room_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xPipeline::load(repo_root()).expect("pi3x pipeline");
+    let pipeline =
+        Pi3xPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -159,7 +161,8 @@ fn pi3x_preprocess_matches_room_golden_baseline() {
 #[test]
 fn pi3x_core_outputs_match_room_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xPipeline::load(repo_root()).expect("pi3x pipeline");
+    let pipeline =
+        Pi3xPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -232,7 +235,8 @@ fn pi3x_core_outputs_match_room_golden_baseline() {
 #[test]
 fn pi3x_export_ply_end_to_end_emits_vendor_aligned_header() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xPipeline::load(repo_root()).expect("pi3x pipeline");
+    let pipeline =
+        Pi3xPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -270,7 +274,8 @@ fn pi3x_export_ply_end_to_end_emits_vendor_aligned_header() {
 #[test]
 fn pi3x_vo_outputs_match_skating_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -363,7 +368,8 @@ fn pi3x_vo_outputs_match_skating_golden_baseline() {
 #[test]
 fn pi3x_vo_with_injected_overlap_conditions_runs() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -393,7 +399,8 @@ fn pi3x_vo_with_injected_overlap_conditions_runs() {
 #[test]
 fn pi3x_vo_with_injected_overlap_conditions_matches_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -441,7 +448,8 @@ fn pi3x_vo_with_injected_overlap_conditions_matches_golden_baseline() {
 #[test]
 fn pi3x_vo_rejects_invalid_overlap_configuration() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let err = pipeline
         .infer_from_path(
             &repo_root()
@@ -465,7 +473,8 @@ fn pi3x_vo_rejects_invalid_overlap_configuration() {
 #[test]
 fn pi3x_vo_sparse_overlap_uses_adaptive_masking_and_runs() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -491,7 +500,8 @@ fn pi3x_vo_sparse_overlap_uses_adaptive_masking_and_runs() {
 #[test]
 fn pi3x_vo_export_ply_uses_inference_time_masking() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3xVoPipeline::load(repo_root()).expect("pi3x vo pipeline");
+    let pipeline =
+        Pi3xVoPipeline::load(model_asset_options(ModelFamily::Pi3x)).expect("pi3x vo pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()

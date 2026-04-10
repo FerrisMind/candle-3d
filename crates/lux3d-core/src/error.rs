@@ -6,6 +6,16 @@ pub enum Lux3dError {
     InvalidInput(&'static str),
     #[error("missing required weight file at `{path}`")]
     MissingWeightFile { path: PathBuf },
+    #[error("could not determine a user cache directory for LuxRT model assets")]
+    CacheDirUnavailable,
+    #[error("model asset I/O failed for `{path}`: {source}")]
+    ModelAssetIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("model asset resolution failed: {message}")]
+    ModelAssetResolution { message: String },
     #[error("failed to read contract file `{path}`: {source}")]
     ContractFileIo {
         path: PathBuf,

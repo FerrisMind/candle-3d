@@ -1,14 +1,52 @@
 use std::path::PathBuf;
 
+use lux3d_core::test_support::runtime_root;
 use lux3d_core::{
     ExportSpec, FutureWeightLoader, GeometrySpec, ModelFamily, ModelSpec, NeuralSpec,
     PreprocessSpec, RuntimeGeometry, SourceDisposition,
 };
 
+fn assert_path_free_weight_plan(
+    spec: &ModelSpec,
+    family: ModelFamily,
+    expected_raw_files: &[&str],
+) {
+    assert_eq!(
+        expected_raw_files
+            .iter()
+            .map(|name| PathBuf::from(name))
+            .collect::<Vec<_>>(),
+        spec.weight_plan.raw_files.to_vec()
+    );
+    assert_eq!(
+        PathBuf::from(family.as_str()),
+        spec.weight_plan.canonical_root
+    );
+    for path in spec
+        .weight_plan
+        .raw_files
+        .iter()
+        .chain(std::iter::once(&spec.weight_plan.canonical_root))
+    {
+        let rendered = path.to_string_lossy();
+        for forbidden in [
+            "3d/models",
+            "3d/canonical-weights",
+            "yyfz233-Pi3",
+            "yyfz233-Pi3X",
+            "stabilityai-TripoSR",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "weight plan must stay path-free, found `{forbidden}` in `{rendered}`"
+            );
+        }
+    }
+}
+
 #[test]
 fn pi3_model_spec_is_source_truth_backed() {
-    let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3)
-        .expect("pi3 model spec");
+    let spec = ModelSpec::inspect(runtime_root(), ModelFamily::Pi3).expect("pi3 model spec");
 
     match &spec.preprocess {
         PreprocessSpec::Pi3(preprocess) => {
@@ -51,6 +89,7 @@ fn pi3_model_spec_is_source_truth_backed() {
         FutureWeightLoader::CandleMmapSafetensors,
         spec.weight_plan.future_loader
     );
+    assert_path_free_weight_plan(&spec, ModelFamily::Pi3, &["model.safetensors"]);
     assert!(
         spec.license_policy
             .entries
@@ -67,8 +106,7 @@ fn pi3_model_spec_is_source_truth_backed() {
 
 #[test]
 fn pi3x_model_spec_is_source_truth_backed() {
-    let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3x)
-        .expect("pi3x model spec");
+    let spec = ModelSpec::inspect(runtime_root(), ModelFamily::Pi3x).expect("pi3x model spec");
 
     match &spec.preprocess {
         PreprocessSpec::Pi3x(preprocess) => {
@@ -108,7 +146,11 @@ fn pi3x_model_spec_is_source_truth_backed() {
         FutureWeightLoader::CandleMmapSafetensors,
         spec.weight_plan.future_loader
     );
-    assert_eq!(2, spec.weight_plan.raw_files.len());
+    assert_path_free_weight_plan(
+        &spec,
+        ModelFamily::Pi3x,
+        &["model.safetensors", "config.json"],
+    );
     assert_eq!("room-golden", spec.golden_baseline_sample);
     assert!(
         spec.notes
@@ -119,8 +161,8 @@ fn pi3x_model_spec_is_source_truth_backed() {
 
 #[test]
 fn triposr_model_spec_is_source_truth_backed() {
-    let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::TripoSr)
-        .expect("triposr model spec");
+    let spec =
+        ModelSpec::inspect(runtime_root(), ModelFamily::TripoSr).expect("triposr model spec");
 
     match &spec.preprocess {
         PreprocessSpec::TripoSr(preprocess) => {
@@ -159,11 +201,11 @@ fn triposr_model_spec_is_source_truth_backed() {
         other => panic!("expected TripoSR export spec, got {other:?}"),
     }
 
-    assert_eq!(2, spec.weight_plan.raw_files.len());
     assert_eq!(
         FutureWeightLoader::CandleMmapSafetensors,
         spec.weight_plan.future_loader
     );
+    assert_path_free_weight_plan(&spec, ModelFamily::TripoSr, &["model.ckpt", "config.yaml"]);
     assert_eq!("horse-golden", spec.golden_baseline_sample);
 
     let RuntimeGeometry::TripoSr(runtime) = &spec.runtime_geometry else {
@@ -176,8 +218,7 @@ fn triposr_model_spec_is_source_truth_backed() {
 #[test]
 fn license_policy_covers_every_used_source_file() {
     for family in [ModelFamily::Pi3, ModelFamily::Pi3x, ModelFamily::TripoSr] {
-        let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), family)
-            .expect("source-backed model spec");
+        let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
         for source_path in spec.used_source_paths().iter() {
             assert!(
@@ -191,8 +232,7 @@ fn license_policy_covers_every_used_source_file() {
 #[test]
 fn vendor_sources_have_fingerprints_and_license_entries() {
     for family in [ModelFamily::Pi3, ModelFamily::Pi3x, ModelFamily::TripoSr] {
-        let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), family)
-            .expect("source-backed model spec");
+        let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
         for vendor in &spec.vendor_sources {
             assert!(

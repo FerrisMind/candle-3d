@@ -16,8 +16,8 @@ use ndarray::{Array3, Axis, Ix3};
 use ndarray_npy::NpzReader;
 
 use crate::{
-    CanonicalWeightSetPaths, ModelFamily, Result, contracts::SpatialSize, error::Lux3dError,
-    export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
+    error::Lux3dError, export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
     neural::Pi3xNeuralStage, preprocess::Pi3xPreprocessStage,
 };
 
@@ -207,9 +207,9 @@ pub struct Pi3xVoPipeline {
 }
 
 impl Pi3xPipeline {
-    pub fn load(repo_root: PathBuf) -> Result<Self> {
+    pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
         Ok(Self {
-            weights: load_canonical_weights(ModelFamily::Pi3x, repo_root)?,
+            weights: load_canonical_weights(ModelFamily::Pi3x, model_assets)?,
             preprocess: Pi3xPreprocessStage::default(),
             neural: Pi3xNeuralStage,
             geometry: Pi3GeometryStage,
@@ -1044,9 +1044,9 @@ impl Pi3xPipeline {
 }
 
 impl Pi3xVoPipeline {
-    pub fn load(repo_root: PathBuf) -> Result<Self> {
+    pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
         Ok(Self {
-            core: Pi3xPipeline::load(repo_root)?,
+            core: Pi3xPipeline::load(model_assets)?,
         })
     }
 

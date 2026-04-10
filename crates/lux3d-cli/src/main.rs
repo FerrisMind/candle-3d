@@ -1,8 +1,5 @@
-mod cli;
-
-pub use cli::{Cli, Command, inspect_model, normalize_weights, run_model};
-
 use clap::Parser;
+use lux3d_cli::{Cli, Command, WeightsCommand, inspect_model, normalize_weights, run_model};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -12,8 +9,13 @@ fn main() -> anyhow::Result<()> {
             println!("{rendered}");
         }
         Command::Weights(args) => match args.command {
-            cli::WeightsCommand::Normalize(family) => {
-                let rendered = normalize_weights(family.repo_root, family.family.model_family())?;
+            WeightsCommand::Normalize(family) => {
+                let rendered = normalize_weights(
+                    family.repo_root,
+                    family.family.model_family(),
+                    family.raw_model_dir,
+                    family.output_dir,
+                )?;
                 println!("{rendered}");
             }
         },

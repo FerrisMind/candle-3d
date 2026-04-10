@@ -3,12 +3,13 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use candle_core::{DType, Device};
+use lux3d_core::ModelFamily;
 use lux3d_core::runtime::Pi3Pipeline;
-use lux3d_core::test_support::GpuTestLock;
+use lux3d_core::test_support::{GpuTestLock, model_asset_options, runtime_root};
 use safetensors::SafeTensors;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(r"H:\GitHub\LuxRT")
+    runtime_root()
 }
 
 fn accel_device() -> Device {
@@ -18,7 +19,7 @@ fn accel_device() -> Device {
 #[test]
 fn pi3_preprocess_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -93,7 +94,7 @@ fn pi3_preprocess_matches_house_golden_baseline() {
 #[test]
 fn pi3_video_preprocess_matches_skating_smoke_summary() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -115,7 +116,7 @@ fn pi3_video_preprocess_matches_skating_smoke_summary() {
 #[test]
 fn pi3_prepared_tokens_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -170,7 +171,7 @@ fn pi3_prepared_tokens_match_house_golden_baseline() {
 #[test]
 fn pi3_encoder_patch_tokens_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -225,7 +226,7 @@ fn pi3_encoder_patch_tokens_match_house_golden_baseline() {
 #[test]
 fn pi3_decoder_hidden_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -269,7 +270,7 @@ fn pi3_decoder_hidden_matches_house_golden_baseline() {
 #[test]
 fn pi3_decoder_positions_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -326,7 +327,7 @@ fn pi3_decoder_positions_match_house_golden_baseline() {
 #[test]
 fn pi3_point_decoder_hidden_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -375,7 +376,7 @@ fn pi3_point_decoder_hidden_matches_house_golden_baseline() {
 #[test]
 fn pi3_conf_decoder_hidden_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -424,7 +425,7 @@ fn pi3_conf_decoder_hidden_matches_house_golden_baseline() {
 #[test]
 fn pi3_camera_decoder_hidden_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -473,7 +474,7 @@ fn pi3_camera_decoder_hidden_matches_house_golden_baseline() {
 #[test]
 fn pi3_local_points_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -521,7 +522,7 @@ fn pi3_local_points_match_house_golden_baseline() {
 #[test]
 fn pi3_confidence_logits_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -566,7 +567,7 @@ fn pi3_confidence_logits_match_house_golden_baseline() {
 #[test]
 fn pi3_camera_poses_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -611,7 +612,7 @@ fn pi3_camera_poses_match_house_golden_baseline() {
 #[test]
 fn pi3_points_match_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -657,7 +658,7 @@ fn pi3_points_match_house_golden_baseline() {
 #[test]
 fn pi3_export_mask_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -697,7 +698,7 @@ fn pi3_export_mask_matches_house_golden_baseline() {
 #[test]
 fn pi3_non_edge_mask_matches_house_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let baseline_path = repo_root()
         .join("3d")
         .join("_generated")
@@ -734,7 +735,7 @@ fn pi3_non_edge_mask_matches_house_golden_baseline() {
 #[test]
 fn pi3_export_ply_end_to_end_emits_vendor_aligned_header() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+    let pipeline = Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
     let output = pipeline
         .infer_from_path_with_interval(
             &repo_root()

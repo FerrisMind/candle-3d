@@ -1,10 +1,11 @@
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
+use lux3d_core::test_support::runtime_root;
 use lux3d_core::{BaselineManifest, BaselineSampleKind, ModelFamily, ModelSpec};
 use serde_json::Value;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(r"H:\GitHub\LuxRT")
+    runtime_root()
 }
 
 fn baseline_manifest_path(family: &str, sample_id: &str) -> PathBuf {
@@ -147,7 +148,7 @@ fn smoke_manifests_are_summary_only() {
 }
 
 #[test]
-fn manifests_reference_expected_local_weight_files() {
+fn manifests_reference_expected_weight_filenames() {
     for (family, sample_id, model_family) in [
         ("pi3", "house-golden", ModelFamily::Pi3),
         ("pi3", "skating-smoke", ModelFamily::Pi3),
@@ -159,10 +160,43 @@ fn manifests_reference_expected_local_weight_files() {
     ] {
         let manifest = load_manifest(family, sample_id);
         let spec = ModelSpec::inspect(repo_root(), model_family).expect("model spec");
-        assert_eq!(
-            spec.weight_plan.raw_files.as_ref(),
-            manifest.weight_files.as_ref()
-        );
+        let expected = spec
+            .weight_plan
+            .raw_files
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .expect("weight file name")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let actual = manifest
+            .weight_files
+            .iter()
+            .map(|path| {
+                path.file_name()
+                    .and_then(|value| value.to_str())
+                    .expect("weight file name")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(expected, actual);
+        for weight_file in &manifest.weight_files {
+            let rendered = weight_file.to_string_lossy();
+            for forbidden in [
+                "3d/models",
+                "3d/canonical-weights",
+                "yyfz233-Pi3",
+                "yyfz233-Pi3X",
+                "stabilityai-TripoSR",
+            ] {
+                assert!(
+                    !rendered.contains(forbidden),
+                    "baseline weight_files must stay path-free, found `{forbidden}` in `{rendered}`"
+                );
+            }
+        }
     }
 }
 

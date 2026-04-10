@@ -17,6 +17,14 @@ impl ModelFamily {
             Self::TripoSr => "triposr",
         }
     }
+
+    pub const fn huggingface_repo_id(self) -> &'static str {
+        match self {
+            Self::Pi3 => "oxide-lab/Pi3",
+            Self::Pi3x => "oxide-lab/Pi3X",
+            Self::TripoSr => "oxide-lab/TripoSR",
+        }
+    }
 }
 
 impl std::fmt::Display for ModelFamily {

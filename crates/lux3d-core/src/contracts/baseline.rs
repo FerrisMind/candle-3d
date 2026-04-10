@@ -92,7 +92,9 @@ impl BaselineManifest {
             });
         }
 
-        if self.weight_files.as_ref() != spec.weight_plan.raw_files.as_ref() {
+        if normalize_weight_files(self.weight_files.as_ref())
+            != normalize_weight_files(spec.weight_plan.raw_files.as_ref())
+        {
             return Err(Lux3dError::BaselineValidation {
                 message: format!(
                     "manifest weight files {:?} do not match spec {:?}",
@@ -168,4 +170,16 @@ impl BaselineManifest {
 
         Ok(())
     }
+}
+
+fn normalize_weight_files(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        })
+        .collect()
 }

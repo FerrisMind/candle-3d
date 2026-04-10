@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use candle_core::{DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{
@@ -11,9 +8,9 @@ use candle_nn::{
 use image::{DynamicImage, ImageBuffer, ImageReader, Rgba, RgbaImage};
 
 use crate::{
-    CanonicalWeightSetPaths, ModelFamily, Result, contracts::SpatialSize, error::Lux3dError,
-    export::TripoExportStage, geometry::TripoGeometryStage, load_canonical_weights,
-    neural::TripoNeuralStage, preprocess::TripoPreprocessStage,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
+    error::Lux3dError, export::TripoExportStage, geometry::TripoGeometryStage,
+    load_canonical_weights, neural::TripoNeuralStage, preprocess::TripoPreprocessStage,
 };
 
 #[cfg(feature = "vision-preproc")]
@@ -113,9 +110,9 @@ pub struct TripoSrPipeline {
 }
 
 impl TripoSrPipeline {
-    pub fn load(repo_root: PathBuf) -> Result<Self> {
+    pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
         Ok(Self {
-            weights: load_canonical_weights(ModelFamily::TripoSr, repo_root)?,
+            weights: load_canonical_weights(ModelFamily::TripoSr, model_assets)?,
             preprocess: TripoPreprocessStage::default(),
             neural: TripoNeuralStage,
             geometry: TripoGeometryStage,

@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand};
 use lux3d_core::runtime::{
     Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSrPipeline,
 };
-use lux3d_core::{ModelFamily, WeightLocator, ensure_canonical_weights};
+use lux3d_core::{ModelAssetOptions, ModelFamily, WeightLocator, ensure_canonical_weights};
 
 #[derive(Debug, Parser, PartialEq)]
 #[command(
@@ -40,13 +40,22 @@ pub struct WeightsArgs {
 
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 pub enum WeightsCommand {
-    Normalize(FamilyArgs),
+    Normalize(NormalizeArgs),
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq)]
-pub struct FamilyArgs {
+pub struct NormalizeArgs {
     #[arg(long)]
     pub repo_root: PathBuf,
+
+    #[arg(
+        long,
+        help = "Path to the upstream raw model directory used only for maintainer-side canonicalization."
+    )]
+    pub raw_model_dir: PathBuf,
+
+    #[arg(long)]
+    pub output_dir: PathBuf,
 
     #[arg(value_enum)]
     pub family: Family,
@@ -54,9 +63,6 @@ pub struct FamilyArgs {
 
 #[derive(Debug, Clone, Args, PartialEq)]
 pub struct RunArgs {
-    #[arg(long)]
-    pub repo_root: PathBuf,
-
     #[arg(value_enum)]
     pub family: Family,
 
@@ -89,6 +95,18 @@ pub struct RunArgs {
 
     #[arg(long)]
     pub mc_threshold: Option<f32>,
+
+    #[arg(
+        long,
+        help = "Path to a canonical package directory laid out like 3d/canonical-weights/<family>."
+    )]
+    pub model_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help = "Override the Hugging Face cache root used when --model-path is not supplied."
+    )]
+    pub cache_dir: Option<PathBuf>,
 
     #[arg(long)]
     pub output: PathBuf,
@@ -152,13 +170,13 @@ impl Command {
         }
     }
 
-    pub fn repo_root(&self) -> &PathBuf {
+    pub fn repo_root(&self) -> Option<&PathBuf> {
         match self {
-            Self::Inspect(args) => &args.repo_root,
+            Self::Inspect(args) => Some(&args.repo_root),
             Self::Weights(args) => match &args.command {
-                WeightsCommand::Normalize(family) => &family.repo_root,
+                WeightsCommand::Normalize(family) => Some(&family.repo_root),
             },
-            Self::Run(args) => &args.repo_root,
+            Self::Run(_) => None,
         }
     }
 }
@@ -168,7 +186,12 @@ pub fn inspect_model(repo_root: PathBuf, family: ModelFamily) -> anyhow::Result<
     Ok(serde_json::to_string_pretty(&spec)?)
 }
 
-pub fn normalize_weights(repo_root: PathBuf, family: ModelFamily) -> anyhow::Result<String> {
+pub fn normalize_weights(
+    repo_root: PathBuf,
+    family: ModelFamily,
+    raw_model_dir: PathBuf,
+    output_dir: PathBuf,
+) -> anyhow::Result<String> {
     let python = python_executable(&repo_root, family);
     let script = repo_root
         .join("3d-rs")
@@ -188,8 +211,10 @@ pub fn normalize_weights(repo_root: PathBuf, family: ModelFamily) -> anyhow::Res
         .arg(&script)
         .arg("--family")
         .arg(family_name)
-        .arg("--repo-root")
-        .arg(&repo_root)
+        .arg("--raw-model-dir")
+        .arg(&raw_model_dir)
+        .arg("--output-dir")
+        .arg(&output_dir)
         .output()?;
 
     if !output.status.success() {
@@ -200,13 +225,17 @@ pub fn normalize_weights(repo_root: PathBuf, family: ModelFamily) -> anyhow::Res
         );
     }
 
-    let locator = WeightLocator::new(repo_root.clone());
+    let locator = WeightLocator::new(raw_model_dir, output_dir);
     let plan = locator.locate(family)?;
     let canonical = ensure_canonical_weights(&plan)?;
     Ok(serde_json::to_string_pretty(&canonical.manifest)?)
 }
 
 pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
+    let model_assets = ModelAssetOptions {
+        canonical_dir: args.model_path.clone(),
+        cache_dir: args.cache_dir.clone(),
+    };
     let device = candle_core::Device::new_cuda(0)?;
     if let Some(parent) = args
         .output
@@ -218,14 +247,14 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
 
     match args.family.model_family() {
         ModelFamily::Pi3 => run_pi3(
-            args.repo_root,
+            model_assets,
             &args.source,
             args.interval,
             &args.output,
             &device,
         )?,
         ModelFamily::Pi3x => run_pi3x(
-            args.repo_root,
+            model_assets,
             &args.source,
             args.conditions.as_deref(),
             args.interval,
@@ -238,7 +267,7 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
             &device,
         )?,
         ModelFamily::TripoSr => run_triposr(
-            args.repo_root,
+            model_assets,
             &args.source,
             args.mc_resolution.unwrap_or(256),
             args.mc_threshold.unwrap_or(25.0),
@@ -251,13 +280,13 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
 }
 
 fn run_pi3(
-    repo_root: PathBuf,
+    model_assets: ModelAssetOptions,
     source: &Path,
     interval: Option<usize>,
     output: &Path,
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
-    let pipeline = Pi3Pipeline::load(repo_root)?;
+    let pipeline = Pi3Pipeline::load(model_assets)?;
     let inference = pipeline.infer_from_path_with_interval(source, interval, device)?;
     pipeline.export_ply(&inference, output)?;
     Ok(())
@@ -265,7 +294,7 @@ fn run_pi3(
 
 #[allow(clippy::too_many_arguments)]
 fn run_pi3x(
-    repo_root: PathBuf,
+    model_assets: ModelAssetOptions,
     source: &Path,
     conditions: Option<&Path>,
     interval: Option<usize>,
@@ -289,7 +318,7 @@ fn run_pi3x(
                 .iter()
                 .any(|item| matches!(item, InjectCondition::Ray | InjectCondition::Intrinsic)),
         };
-        let pipeline = Pi3xVoPipeline::load(repo_root)?;
+        let pipeline = Pi3xVoPipeline::load(model_assets)?;
         let inference = pipeline.infer_from_path(
             source,
             interval,
@@ -301,7 +330,7 @@ fn run_pi3x(
         )?;
         pipeline.export_ply(&inference, output)?;
     } else {
-        let pipeline = Pi3xPipeline::load(repo_root)?;
+        let pipeline = Pi3xPipeline::load(model_assets)?;
         let inference = pipeline.infer_from_path(source, conditions, interval, device)?;
         pipeline.export_ply(&inference, output)?;
     }
@@ -309,7 +338,7 @@ fn run_pi3x(
 }
 
 fn run_triposr(
-    repo_root: PathBuf,
+    model_assets: ModelAssetOptions,
     source: &Path,
     mc_resolution: u32,
     mc_threshold: f32,
@@ -317,7 +346,7 @@ fn run_triposr(
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(mc_resolution >= 2, "--mc-resolution must be at least 2");
-    let pipeline = TripoSrPipeline::load(repo_root)?;
+    let pipeline = TripoSrPipeline::load(model_assets)?;
     let inference = pipeline.infer_from_path(source, device)?;
     let mesh = pipeline.extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)?;
     pipeline.export_obj(&mesh, output)?;
@@ -336,17 +365,44 @@ fn python_executable(repo_root: &std::path::Path, family: ModelFamily) -> PathBu
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::path::PathBuf;
+    use std::{fs, path::Path};
 
     use clap::Parser;
 
     use super::{Cli, Command, RunArgs, inspect_model, normalize_weights, run_model};
-    use lux3d_core::{ModelFamily, test_support::GpuTestLock};
+    use lux3d_core::{
+        ModelFamily,
+        test_support::{
+            GpuTestLock, canonical_package_dir, resolve_raw_model_dir_for_tests, runtime_root,
+        },
+    };
+
+    fn repo_root() -> PathBuf {
+        runtime_root()
+    }
+
+    fn temp_output_dir(family: ModelFamily) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("current time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("lux3d-cli-{}-{unique}", family.as_str()))
+    }
+
+    fn cleanup_dir(path: &Path) {
+        let _ = fs::remove_dir_all(path);
+    }
 
     #[test]
     fn routes_inspect_pi3_family() {
-        let cli = Cli::parse_from(["lux3d", "inspect", "--repo-root", r"H:\GitHub\LuxRT", "pi3"]);
+        let cli = Cli::parse_from([
+            "lux3d",
+            "inspect",
+            "--repo-root",
+            repo_root().to_string_lossy().as_ref(),
+            "pi3",
+        ]);
         assert_eq!("pi3", cli.command.family_name());
     }
 
@@ -357,7 +413,13 @@ mod tests {
             "weights",
             "normalize",
             "--repo-root",
-            r"H:\GitHub\LuxRT",
+            repo_root().to_string_lossy().as_ref(),
+            "--raw-model-dir",
+            r"C:\raw-models\triposr",
+            "--output-dir",
+            canonical_package_dir(ModelFamily::TripoSr)
+                .to_string_lossy()
+                .as_ref(),
             "triposr",
         ]);
         assert_eq!("triposr", cli.command.family_name());
@@ -368,21 +430,39 @@ mod tests {
         let cli = Cli::parse_from([
             "lux3d",
             "run",
-            "--repo-root",
-            r"H:\GitHub\LuxRT",
             "pi3",
             "--source",
-            r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\house",
+            repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("house")
+                .to_string_lossy()
+                .as_ref(),
+            "--model-path",
+            canonical_package_dir(ModelFamily::Pi3)
+                .to_string_lossy()
+                .as_ref(),
             "--interval",
             "10",
             "--output",
-            r"H:\GitHub\LuxRT\3d\_generated\pi3.ply",
+            repo_root()
+                .join("3d")
+                .join("_generated")
+                .join("pi3.ply")
+                .to_string_lossy()
+                .as_ref(),
         ]);
         assert_eq!("pi3", cli.command.family_name());
         let Command::Run(args) = cli.command else {
             panic!("expected run command");
         };
         assert_eq!(Some(10), args.interval);
+        assert_eq!(
+            Some(canonical_package_dir(ModelFamily::Pi3)),
+            args.model_path
+        );
     }
 
     #[test]
@@ -390,15 +470,38 @@ mod tests {
         let cli = Cli::parse_from([
             "lux3d",
             "run",
-            "--repo-root",
-            r"H:\GitHub\LuxRT",
             "pi3x",
             "--source",
-            r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\rgb",
+            repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("room")
+                .join("rgb")
+                .to_string_lossy()
+                .as_ref(),
             "--conditions",
-            r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\condition.npz",
+            repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("room")
+                .join("condition.npz")
+                .to_string_lossy()
+                .as_ref(),
+            "--model-path",
+            canonical_package_dir(ModelFamily::Pi3x)
+                .to_string_lossy()
+                .as_ref(),
             "--output",
-            r"H:\GitHub\LuxRT\3d\_generated\pi3x.ply",
+            repo_root()
+                .join("3d")
+                .join("_generated")
+                .join("pi3x.ply")
+                .to_string_lossy()
+                .as_ref(),
         ]);
         assert_eq!("pi3x", cli.command.family_name());
     }
@@ -408,11 +511,20 @@ mod tests {
         let cli = Cli::parse_from([
             "lux3d",
             "run",
-            "--repo-root",
-            r"H:\GitHub\LuxRT",
             "pi3x",
             "--source",
-            r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\skating.mp4",
+            repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("skating.mp4")
+                .to_string_lossy()
+                .as_ref(),
+            "--model-path",
+            canonical_package_dir(ModelFamily::Pi3x)
+                .to_string_lossy()
+                .as_ref(),
             "--vo",
             "--chunk-size",
             "8",
@@ -423,7 +535,12 @@ mod tests {
             "--inject-condition",
             "pose,depth,ray",
             "--output",
-            r"H:\GitHub\LuxRT\3d\_generated\pi3x-vo.ply",
+            repo_root()
+                .join("3d")
+                .join("_generated")
+                .join("pi3x-vo.ply")
+                .to_string_lossy()
+                .as_ref(),
         ]);
         assert_eq!("pi3x", cli.command.family_name());
         let Command::Run(args) = cli.command else {
@@ -448,16 +565,30 @@ mod tests {
         let result = Cli::try_parse_from([
             "lux3d",
             "run",
-            "--repo-root",
-            r"H:\GitHub\LuxRT",
             "pi3x",
             "--source",
-            r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\skating.mp4",
+            repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("skating.mp4")
+                .to_string_lossy()
+                .as_ref(),
+            "--model-path",
+            canonical_package_dir(ModelFamily::Pi3x)
+                .to_string_lossy()
+                .as_ref(),
             "--vo",
             "--inject-condition",
             "pose,unknown",
             "--output",
-            r"H:\GitHub\LuxRT\3d\_generated\pi3x-vo.ply",
+            repo_root()
+                .join("3d")
+                .join("_generated")
+                .join("pi3x-vo.ply")
+                .to_string_lossy()
+                .as_ref(),
         ]);
         assert!(
             result.is_err(),
@@ -467,18 +598,41 @@ mod tests {
 
     #[test]
     fn renders_pi3_model_spec_as_json() {
-        let json = inspect_model(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3)
-            .expect("pi3 inspection");
+        let json = inspect_model(repo_root(), ModelFamily::Pi3).expect("pi3 inspection");
         assert!(json.contains("\"family\": \"pi3\""));
         assert!(json.contains("\"canonical_filename\": \"model.safetensors\""));
+        for forbidden in [
+            "3d/models",
+            "3d/canonical-weights",
+            "yyfz233-Pi3",
+            "yyfz233-Pi3X",
+            "stabilityai-TripoSR",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "inspect output must stay path-free, found `{forbidden}`"
+            );
+        }
     }
 
     #[test]
     fn normalize_weights_runs_python_canonicalizer_for_pi3() {
-        let result = normalize_weights(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3)
-            .expect("pi3 canonical weights");
+        let raw_model_dir =
+            resolve_raw_model_dir_for_tests(ModelFamily::Pi3).expect("resolve pi3 raw model dir");
+        let output_dir = temp_output_dir(ModelFamily::Pi3);
+        let result = normalize_weights(
+            repo_root(),
+            ModelFamily::Pi3,
+            raw_model_dir,
+            output_dir.clone(),
+        )
+        .expect("pi3 canonical weights");
+        cleanup_dir(&output_dir);
         assert!(result.contains("\"family\": \"pi3\""));
         assert!(result.contains("\"tensor_count\": 1210"));
+        assert!(result.contains("\"raw_files\": [\n    \"model.safetensors\"\n  ]"));
+        assert!(result.contains("\"canonical_file\": \"model.safetensors\""));
+        assert!(!result.contains("3d/models"));
     }
 
     #[test]
@@ -486,9 +640,13 @@ mod tests {
         let _guard = GpuTestLock::acquire().expect("gpu test lock");
         let output = std::env::temp_dir().join(format!("lux3d-cli-pi3-{}.ply", std::process::id()));
         let args = RunArgs {
-            repo_root: PathBuf::from(r"H:\GitHub\LuxRT"),
             family: super::Family::Pi3,
-            source: PathBuf::from(r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\house"),
+            source: repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("house"),
             interval: None,
             conditions: None,
             vo: false,
@@ -498,6 +656,8 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: None,
             mc_threshold: None,
+            model_path: Some(canonical_package_dir(ModelFamily::Pi3)),
+            cache_dir: None,
             output: output.clone(),
         };
 
@@ -515,9 +675,13 @@ mod tests {
         let output =
             std::env::temp_dir().join(format!("lux3d-cli-triposr-{}.obj", std::process::id()));
         let args = RunArgs {
-            repo_root: PathBuf::from(r"H:\GitHub\LuxRT"),
             family: super::Family::Triposr,
-            source: PathBuf::from(r"H:\GitHub\LuxRT\tp\3d\TripoSR\examples\horse.png"),
+            source: repo_root()
+                .join("tp")
+                .join("3d")
+                .join("TripoSR")
+                .join("examples")
+                .join("horse.png"),
             interval: None,
             conditions: None,
             vo: false,
@@ -527,6 +691,8 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: Some(256),
             mc_threshold: Some(25.0),
+            model_path: Some(canonical_package_dir(ModelFamily::TripoSr)),
+            cache_dir: None,
             output: output.clone(),
         };
 
@@ -546,9 +712,13 @@ mod tests {
             std::process::id()
         ));
         let args = RunArgs {
-            repo_root: PathBuf::from(r"H:\GitHub\LuxRT"),
             family: super::Family::Triposr,
-            source: PathBuf::from(r"H:\GitHub\LuxRT\tp\3d\TripoSR\examples\horse.png"),
+            source: repo_root()
+                .join("tp")
+                .join("3d")
+                .join("TripoSR")
+                .join("examples")
+                .join("horse.png"),
             interval: None,
             conditions: None,
             vo: false,
@@ -558,6 +728,8 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: Some(1),
             mc_threshold: Some(25.0),
+            model_path: Some(canonical_package_dir(ModelFamily::TripoSr)),
+            cache_dir: None,
             output,
         };
 
@@ -574,13 +746,24 @@ mod tests {
         let output =
             std::env::temp_dir().join(format!("lux3d-cli-pi3x-{}.ply", std::process::id()));
         let args = RunArgs {
-            repo_root: PathBuf::from(r"H:\GitHub\LuxRT"),
             family: super::Family::Pi3x,
-            source: PathBuf::from(r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\rgb"),
+            source: repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("room")
+                .join("rgb"),
             interval: Some(2),
-            conditions: Some(PathBuf::from(
-                r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\condition.npz",
-            )),
+            conditions: Some(
+                repo_root()
+                    .join("tp")
+                    .join("3d")
+                    .join("Pi3")
+                    .join("examples")
+                    .join("room")
+                    .join("condition.npz"),
+            ),
             vo: false,
             chunk_size: None,
             overlap: None,
@@ -588,6 +771,8 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: None,
             mc_threshold: None,
+            model_path: Some(canonical_package_dir(ModelFamily::Pi3x)),
+            cache_dir: None,
             output: output.clone(),
         };
 
@@ -605,9 +790,13 @@ mod tests {
         let output =
             std::env::temp_dir().join(format!("lux3d-cli-pi3x-vo-{}.ply", std::process::id()));
         let args = RunArgs {
-            repo_root: PathBuf::from(r"H:\GitHub\LuxRT"),
             family: super::Family::Pi3x,
-            source: PathBuf::from(r"H:\GitHub\LuxRT\tp\3d\Pi3\examples\skating.mp4"),
+            source: repo_root()
+                .join("tp")
+                .join("3d")
+                .join("Pi3")
+                .join("examples")
+                .join("skating.mp4"),
             interval: None,
             conditions: None,
             vo: true,
@@ -621,6 +810,8 @@ mod tests {
             ],
             mc_resolution: None,
             mc_threshold: None,
+            model_path: Some(canonical_package_dir(ModelFamily::Pi3x)),
+            cache_dir: None,
             output: output.clone(),
         };
 

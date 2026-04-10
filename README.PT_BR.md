@@ -87,25 +87,28 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 ### Normalizar Pesos Canônicos
 
 ```powershell
-cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> pi3
-cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> pi3x
-cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> triposr
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --output-dir <canonical-pi3-dir> pi3
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --output-dir <canonical-pi3x-dir> pi3x
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
 ```
 
 ### Executar Inferência
 
 ```powershell
-# Pi3 -> PLY
-cargo run -p lux3d-cli -- run --repo-root <runtime-root> pi3 --source <input-sequence> --output <output-file.ply>
+# Pi3 -> PLY com diretório de canonical package explícito no layout de 3d/canonical-weights/pi3
+cargo run -p lux3d-cli -- run pi3 --model-path <canonical-pi3-dir> --source <input-sequence> --output <output-file.ply>
 
-# Pi3X core -> PLY
-cargo run -p lux3d-cli -- run --repo-root <runtime-root> pi3x --source <input-sequence> --conditions <conditions-file> --output <output-file.ply>
+# Pi3X core -> PLY com diretório de canonical package explícito no layout de 3d/canonical-weights/pi3x
+cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <input-sequence> --conditions <conditions-file> --output <output-file.ply>
 
-# Pi3X VO -> PLY
-cargo run -p lux3d-cli -- run --repo-root <runtime-root> pi3x --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
+# Pi3X VO -> PLY com diretório de canonical package explícito no layout de 3d/canonical-weights/pi3x
+cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
 
-# TripoSR -> OBJ
-cargo run -p lux3d-cli -- run --repo-root <runtime-root> triposr --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+# TripoSR -> OBJ com diretório de canonical package explícito no layout de 3d/canonical-weights/triposr
+cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+
+# Download automático de canonical packages do Hugging Face para o cache do usuário
+cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
 ## Requisitos Do Sistema
@@ -114,7 +117,7 @@ cargo run -p lux3d-cli -- run --repo-root <runtime-root> triposr --source <input
 - Cargo com suporte a `edition = "2024"`
 - Python 3.x para baseline tooling e normalização
 - GPU NVIDIA com CUDA para execuções de inferência verificadas
-- Artefatos externos de modelo preparados no ambiente local de runtime
+- Diretórios de canonical model package fornecidos por `--model-path` ou baixados automaticamente do Hugging Face para o cache do usuário
 
 ## Licença
 

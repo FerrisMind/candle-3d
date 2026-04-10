@@ -34,8 +34,8 @@ pub(crate) use triposr::prepare_triposr_inputs_with_stage;
 pub use triposr::{TripoInferenceOutput, TripoMeshBuffers, TripoPreparedInputs, TripoSrPipeline};
 
 use crate::{
-    CanonicalWeightSetPaths, ModelFamily, Result, contracts::SpatialSize, error::Lux3dError,
-    export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
+    error::Lux3dError, export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
     neural::Pi3NeuralStage, preprocess::Pi3PreprocessStage,
 };
 
@@ -186,9 +186,9 @@ pub struct Pi3Pipeline {
 }
 
 impl Pi3Pipeline {
-    pub fn load(repo_root: PathBuf) -> Result<Self> {
+    pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
         Ok(Self {
-            weights: load_canonical_weights(ModelFamily::Pi3, repo_root)?,
+            weights: load_canonical_weights(ModelFamily::Pi3, model_assets)?,
             preprocess: Pi3PreprocessStage::default(),
             neural: Pi3NeuralStage,
             geometry: Pi3GeometryStage,
@@ -774,10 +774,13 @@ mod tests {
     use candle_core::Device;
 
     use super::Pi3Pipeline;
-    use crate::test_support::GpuTestLock;
+    use crate::{
+        ModelFamily,
+        test_support::{GpuTestLock, model_asset_options, runtime_root},
+    };
 
     fn repo_root() -> PathBuf {
-        PathBuf::from(r"H:\GitHub\LuxRT")
+        runtime_root()
     }
 
     fn accel_device() -> Device {
@@ -788,7 +791,8 @@ mod tests {
     fn pi3_encoder_reuses_cached_interpolated_positional_embeddings() {
         let _guard = GpuTestLock::acquire().expect("gpu test lock");
         let device = accel_device();
-        let pipeline = Pi3Pipeline::load(repo_root()).expect("pi3 pipeline");
+        let pipeline =
+            Pi3Pipeline::load(model_asset_options(ModelFamily::Pi3)).expect("pi3 pipeline");
         let prepared = pipeline
             .prepare_inputs_from_path(
                 &repo_root()

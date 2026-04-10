@@ -9,7 +9,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
-from common import build_checksums, ensure_dir, relative_to, resolve_repo_root, sha256_file, write_json
+from common import build_checksums, ensure_dir, sha256_file, write_json
 
 
 NORMALIZER_VERSION = 1
@@ -19,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Normalize LuxRT model weights into canonical safetensors.")
     parser.add_argument("--family", choices=["pi3", "pi3x", "triposr"], required=True)
     parser.add_argument("--repo-root", type=str, default=None)
+    parser.add_argument("--raw-model-dir", type=str, required=True)
+    parser.add_argument("--output-dir", type=str, required=True)
     return parser.parse_args()
 
 
@@ -39,26 +41,20 @@ def histogram(tensors: dict[str, torch.Tensor]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
-def canonical_root(repo_root: Path, family: str) -> Path:
-    return repo_root / "3d" / "canonical-weights" / family
-
-
 def write_outputs(
     *,
-    repo_root: Path,
     family: str,
+    output_dir: Path,
     raw_files: list[Path],
     resolved_config: dict,
     tensors: dict[str, torch.Tensor],
 ) -> None:
-    target_root = ensure_dir(canonical_root(repo_root, family))
+    target_root = ensure_dir(output_dir)
     canonical_file = target_root / "model.safetensors"
     resolved_config_file = target_root / "resolved_config.json"
     manifest_file = target_root / "manifest.json"
     checksums_file = target_root / "checksums.json"
-    source_checksums = {
-        relative_to(path, repo_root): sha256_file(path) for path in raw_files
-    }
+    source_checksums = {path.name: sha256_file(path) for path in raw_files}
 
     if manifest_file.is_file() and canonical_file.is_file() and resolved_config_file.is_file():
         try:
@@ -66,7 +62,7 @@ def write_outputs(
             if (
                 existing_manifest.get("family") == family
                 and existing_manifest.get("normalizer_version") == NORMALIZER_VERSION
-                and existing_manifest.get("raw_files") == [relative_to(path, repo_root) for path in raw_files]
+                and existing_manifest.get("raw_files") == [path.name for path in raw_files]
                 and existing_manifest.get("source_checksums") == source_checksums
             ):
                 return
@@ -80,23 +76,23 @@ def write_outputs(
     manifest = {
         "family": family,
         "normalizer_version": NORMALIZER_VERSION,
-        "raw_files": [relative_to(path, repo_root) for path in raw_files],
-        "canonical_file": relative_to(canonical_file, repo_root),
-        "resolved_config_file": relative_to(resolved_config_file, repo_root),
+        "raw_files": [path.name for path in raw_files],
+        "canonical_file": canonical_file.name,
+        "resolved_config_file": resolved_config_file.name,
         "tensor_count": len(ordered),
         "dtype_histogram": histogram(ordered),
         "source_checksums": source_checksums,
     }
     write_json(manifest_file, manifest)
     checksums = build_checksums(
-        repo_root=repo_root,
+        repo_root=target_root,
         paths=[canonical_file, resolved_config_file, manifest_file],
     )
     write_json(checksums_file, checksums)
 
 
-def normalize_pi3(repo_root: Path) -> None:
-    model_root = repo_root / "3d" / "models" / "yyfz233-Pi3"
+def normalize_pi3(raw_model_dir: Path, output_dir: Path) -> None:
+    model_root = raw_model_dir
     raw_weight = model_root / "model.safetensors"
     raw_config = model_root / "config.json"
 
@@ -107,16 +103,16 @@ def normalize_pi3(repo_root: Path) -> None:
 
     resolved_config = json.loads(raw_config.read_text(encoding="utf-8"))
     write_outputs(
-        repo_root=repo_root,
         family="pi3",
+        output_dir=output_dir,
         raw_files=[raw_weight],
         resolved_config=resolved_config,
         tensors=tensors,
     )
 
 
-def normalize_pi3x(repo_root: Path) -> None:
-    model_root = repo_root / "3d" / "models" / "yyfz233-Pi3X"
+def normalize_pi3x(raw_model_dir: Path, output_dir: Path) -> None:
+    model_root = raw_model_dir
     raw_weight = model_root / "model.safetensors"
     raw_config = model_root / "config.json"
 
@@ -127,18 +123,18 @@ def normalize_pi3x(repo_root: Path) -> None:
 
     resolved_config = json.loads(raw_config.read_text(encoding="utf-8"))
     write_outputs(
-        repo_root=repo_root,
         family="pi3x",
+        output_dir=output_dir,
         raw_files=[raw_weight, raw_config],
         resolved_config=resolved_config,
         tensors=tensors,
     )
 
 
-def normalize_triposr(repo_root: Path) -> None:
+def normalize_triposr(raw_model_dir: Path, output_dir: Path) -> None:
     from omegaconf import OmegaConf
 
-    model_root = repo_root / "3d" / "models" / "stabilityai-TripoSR"
+    model_root = raw_model_dir
     raw_weight = model_root / "model.ckpt"
     raw_config = model_root / "config.yaml"
 
@@ -163,24 +159,27 @@ def normalize_triposr(repo_root: Path) -> None:
         raise RuntimeError("TripoSR checkpoint did not contain any tensors")
 
     write_outputs(
-        repo_root=repo_root,
         family="triposr",
+        output_dir=output_dir,
         raw_files=[raw_weight, raw_config],
         resolved_config=resolved_config,
         tensors=tensors,
     )
 
+def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    return Path(args.raw_model_dir).resolve(), Path(args.output_dir).resolve()
+
 
 def main() -> None:
     args = parse_args()
-    repo_root = resolve_repo_root(args.repo_root)
+    raw_model_dir, output_dir = resolve_paths(args)
 
     if args.family == "pi3":
-        normalize_pi3(repo_root)
+        normalize_pi3(raw_model_dir, output_dir)
     elif args.family == "pi3x":
-        normalize_pi3x(repo_root)
+        normalize_pi3x(raw_model_dir, output_dir)
     elif args.family == "triposr":
-        normalize_triposr(repo_root)
+        normalize_triposr(raw_model_dir, output_dir)
     else:
         raise RuntimeError(f"unsupported family: {args.family}")
 

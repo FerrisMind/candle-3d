@@ -21,6 +21,6 @@ pub use contracts::{
 pub use error::{Lux3dError, Result};
 pub use weights::{
     CanonicalChecksumEntry, CanonicalChecksums, CanonicalWeightSet, CanonicalWeightSetPaths,
-    CanonicalWeightsManifest, CanonicalizationPlan, FutureWeightLoader, RawWeightFormat,
-    WeightLocator, ensure_canonical_weights, load_canonical_weights,
+    CanonicalWeightsManifest, CanonicalizationPlan, FutureWeightLoader, ModelAssetOptions,
+    RawWeightFormat, WeightLocator, ensure_canonical_weights, load_canonical_weights,
 };

@@ -54,6 +54,7 @@ REMBG_BACKEND = "rembg"
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Capture TripoSR Python baseline artifacts.")
     parser.add_argument("--repo-root", type=str, default=None)
+    parser.add_argument("--raw-model-dir", type=str, required=True)
     parser.add_argument("--sample-id", type=str, required=True)
     parser.add_argument("--sample-kind", choices=["golden", "smoke"], required=True)
     parser.add_argument("--source", type=str, required=True)
@@ -198,7 +199,7 @@ def main() -> None:
 
     set_deterministic_seed(args.seed)
     device = select_device(args.device)
-    weight_root = repo_root / "3d" / "models" / "stabilityai-TripoSR"
+    weight_root = Path(args.raw_model_dir).resolve()
 
     model = TSR.from_pretrained(
         str(weight_root),
@@ -315,10 +316,7 @@ def main() -> None:
         "sample_id": args.sample_id,
         "sample_kind": args.sample_kind,
         "source_path": str(source_path),
-        "weight_files": [
-            str((weight_root / "model.ckpt").resolve()),
-            str((weight_root / "config.yaml").resolve()),
-        ],
+        "weight_files": ["model.ckpt", "config.yaml"],
         "device": device,
         "scene_codes_shape": list(scene_codes.shape),
         "vertex_count": int(len(mesh.vertices)),

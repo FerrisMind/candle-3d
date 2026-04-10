@@ -3,12 +3,13 @@ use std::path::PathBuf;
 
 use candle_core::{DType, Device, IndexOp};
 use image::{DynamicImage, Rgba, RgbaImage};
+use lux3d_core::ModelFamily;
 use lux3d_core::runtime::TripoSrPipeline;
-use lux3d_core::test_support::GpuTestLock;
+use lux3d_core::test_support::{GpuTestLock, model_asset_options, runtime_root};
 use serde_json::Value;
 
 fn repo_root() -> PathBuf {
-    PathBuf::from(r"H:\GitHub\LuxRT")
+    runtime_root()
 }
 
 fn accel_device() -> Device {
@@ -32,7 +33,8 @@ fn baseline() -> candle_core::safetensors::MmapedSafetensors {
 #[test]
 fn triposr_preprocess_matches_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let prepared = pipeline
         .prepare_inputs_from_path(
             &repo_root()
@@ -69,7 +71,8 @@ fn triposr_preprocess_matches_horse_golden_baseline() {
 #[test]
 fn triposr_image_tokens_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let prepared = baseline()
         .load("triposr.preprocessed_image", &accel_device())
         .expect("preprocessed image");
@@ -97,7 +100,8 @@ fn triposr_image_tokens_match_horse_golden_baseline() {
 #[test]
 fn triposr_scene_codes_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let prepared = baseline()
         .load("triposr.preprocessed_image", &accel_device())
         .expect("preprocessed image");
@@ -130,7 +134,8 @@ fn triposr_scene_codes_match_horse_golden_baseline() {
 #[test]
 fn triposr_triplane_seed_tokens_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let actual = pipeline
         .triplane_seed_tokens(1, &accel_device())
         .expect("seed tokens");
@@ -156,7 +161,8 @@ fn triposr_triplane_seed_tokens_match_horse_golden_baseline() {
 #[test]
 fn triposr_backbone_tokens_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let prepared = baseline()
         .load("triposr.preprocessed_image", &accel_device())
         .expect("preprocessed image");
@@ -184,7 +190,8 @@ fn triposr_backbone_tokens_match_horse_golden_baseline() {
 #[test]
 fn triposr_detokenized_triplanes_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let prepared = baseline()
         .load("triposr.preprocessed_image", &accel_device())
         .expect("preprocessed image");
@@ -215,7 +222,8 @@ fn triposr_detokenized_triplanes_match_horse_golden_baseline() {
 #[test]
 fn triposr_query_outputs_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let scene_codes = baseline()
         .load("triposr.scene_codes", &accel_device())
         .expect("scene codes");
@@ -294,7 +302,8 @@ fn triposr_query_outputs_match_horse_golden_baseline() {
 #[test]
 fn triposr_mesh_summary_matches_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -389,7 +398,8 @@ fn triposr_mesh_summary_matches_horse_golden_baseline() {
 #[test]
 fn triposr_mesh_faces_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -460,7 +470,8 @@ fn triposr_mesh_faces_match_horse_golden_baseline() {
 #[test]
 fn triposr_vertex_colors_match_horse_golden_baseline() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -517,7 +528,8 @@ fn triposr_vertex_colors_match_horse_golden_baseline() {
 #[test]
 fn triposr_export_obj_serializes_mesh_buffers_consistently() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
     let output = pipeline
         .infer_from_path(
             &repo_root()
@@ -554,7 +566,8 @@ fn triposr_export_obj_serializes_mesh_buffers_consistently() {
 #[test]
 fn triposr_preprocess_matches_vendor_rgba_bbox_crop_semantics() {
     let _guard = GpuTestLock::acquire().expect("gpu test lock");
-    let pipeline = TripoSrPipeline::load(repo_root()).expect("triposr pipeline");
+    let pipeline =
+        TripoSrPipeline::load(model_asset_options(ModelFamily::TripoSr)).expect("triposr pipeline");
 
     let mut image = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 0]));
     image.put_pixel(1, 1, Rgba([255, 0, 0, 255]));

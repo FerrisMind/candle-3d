@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     Result,
     error::Lux3dError,
-    weights::{CanonicalizationPlan, WeightLocator},
+    weights::{CanonicalizationPlan, FutureWeightLoader},
 };
 
 use super::{
@@ -450,13 +450,12 @@ impl ModelSpec {
                 path: contract_path.clone(),
                 source,
             })?;
-        let mut spec: Self =
+        let spec: Self =
             serde_json::from_str(&body).map_err(|source| Lux3dError::ContractFileJson {
                 path: contract_path,
                 source,
             })?;
 
-        spec.resolve_paths(&repo_root);
         spec.validate(repo_root, family)?;
         Ok(spec)
     }
@@ -501,17 +500,6 @@ impl ModelSpec {
         sources.into_iter().collect()
     }
 
-    fn resolve_paths(&mut self, repo_root: &Path) {
-        self.weight_plan.raw_files = self
-            .weight_plan
-            .raw_files
-            .iter()
-            .map(|path| resolve_repo_path(repo_root, path))
-            .collect();
-        self.weight_plan.canonical_root =
-            resolve_repo_path(repo_root, &self.weight_plan.canonical_root);
-    }
-
     fn validate(&self, repo_root: PathBuf, expected_family: ModelFamily) -> Result<()> {
         if self.family != expected_family {
             return Err(Lux3dError::ContractValidation {
@@ -535,15 +523,7 @@ impl ModelSpec {
             });
         }
 
-        let located = WeightLocator::new(repo_root.clone()).locate(expected_family)?;
-        if self.weight_plan != located {
-            return Err(Lux3dError::ContractValidation {
-                message: format!(
-                    "contract weight plan {:?} does not match discovered plan {:?}",
-                    self.weight_plan, located
-                ),
-            });
-        }
+        validate_weight_plan(&self.weight_plan, expected_family)?;
 
         let vendor_sources = self
             .vendor_sources
@@ -594,12 +574,56 @@ impl ModelSpec {
     }
 }
 
-fn resolve_repo_path(repo_root: &Path, path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        repo_root.join(path)
+fn validate_weight_plan(plan: &CanonicalizationPlan, family: ModelFamily) -> Result<()> {
+    if plan.family != family {
+        return Err(Lux3dError::ContractValidation {
+            message: format!(
+                "contract weight plan family `{}` does not match requested family `{}`",
+                plan.family, family
+            ),
+        });
     }
+
+    if plan.future_loader != FutureWeightLoader::CandleMmapSafetensors {
+        return Err(Lux3dError::ContractValidation {
+            message: format!(
+                "unsupported future loader `{:?}` for `{}`",
+                plan.future_loader, family
+            ),
+        });
+    }
+
+    if plan.canonical_filename != "model.safetensors" {
+        return Err(Lux3dError::ContractValidation {
+            message: format!(
+                "contract canonical filename `{}` must stay `model.safetensors`",
+                plan.canonical_filename
+            ),
+        });
+    }
+
+    let canonical_dir_name = plan
+        .canonical_root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if canonical_dir_name != family.as_str() {
+        return Err(Lux3dError::ContractValidation {
+            message: format!(
+                "contract canonical root `{}` must end with `{}`",
+                plan.canonical_root.display(),
+                family.as_str()
+            ),
+        });
+    }
+
+    if plan.raw_files.is_empty() {
+        return Err(Lux3dError::ContractValidation {
+            message: format!("contract weight plan for `{family}` must describe provenance files"),
+        });
+    }
+
+    Ok(())
 }
 
 fn sha256_file(path: &Path) -> Result<String> {

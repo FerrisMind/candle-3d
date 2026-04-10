@@ -1,13 +1,10 @@
-use std::path::PathBuf;
-
+use lux3d_core::test_support::runtime_root;
 use lux3d_core::{ModelFamily, ModelSpec, RuntimeGeometry};
 
 #[test]
 fn pi3_and_pi3x_contracts_are_separately_scoped() {
-    let pi3 = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3)
-        .expect("pi3 contract");
-    let pi3x = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::Pi3x)
-        .expect("pi3x contract");
+    let pi3 = ModelSpec::inspect(runtime_root(), ModelFamily::Pi3).expect("pi3 contract");
+    let pi3x = ModelSpec::inspect(runtime_root(), ModelFamily::Pi3x).expect("pi3x contract");
 
     assert!(
         pi3.vendor_sources
@@ -29,8 +26,7 @@ fn pi3_and_pi3x_contracts_are_separately_scoped() {
 
 #[test]
 fn triposr_runtime_geometry_keeps_integer_faces_with_storage_override() {
-    let spec = ModelSpec::inspect(PathBuf::from(r"H:\GitHub\LuxRT"), ModelFamily::TripoSr)
-        .expect("triposr contract");
+    let spec = ModelSpec::inspect(runtime_root(), ModelFamily::TripoSr).expect("triposr contract");
 
     let RuntimeGeometry::TripoSr(runtime) = &spec.runtime_geometry else {
         panic!("expected triposr runtime geometry");
