@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">Lux3D workspace overview</title>
+  <desc id="desc">Diagram showing Pi3, Pi3X, and TripoSR sources flowing through lux3d-cli and lux3d-core into canonical weights and geometry exports.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#020617"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#22c55e"/>
+      <stop offset="100%" stop-color="#86efac"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <style>
+      .card { rx: 26; ry: 26; fill: #0f172a; stroke: #334155; stroke-width: 3; filter: url(#shadow); }
+      .label { fill: #e2e8f0; font-family: Segoe UI, Arial, sans-serif; font-weight: 700; }
+      .copy { fill: #cbd5e1; font-family: Segoe UI, Arial, sans-serif; }
+      .small { fill: #94a3b8; font-family: Segoe UI, Arial, sans-serif; }
+      .arrow { fill: none; stroke: #64748b; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+
+  <text x="120" y="110" class="label" font-size="54">Lux3D Rust Workspace</text>
+  <text x="120" y="154" class="copy" font-size="26">FerrisMind's clean-room runtime, inspection CLI, and weight tooling for Pi3, Pi3X, and TripoSR.</text>
+
+  <rect x="90" y="230" width="310" height="150" class="card"/>
+  <text x="125" y="286" class="label" font-size="34">Vendor Sources</text>
+  <text x="125" y="328" class="copy" font-size="24">tp/3d/Pi3</text>
+  <text x="125" y="362" class="copy" font-size="24">tp/3d/TripoSR</text>
+
+  <rect x="90" y="430" width="310" height="150" class="card"/>
+  <text x="125" y="486" class="label" font-size="34">Raw Weights</text>
+  <text x="125" y="528" class="copy" font-size="24">3d/models/yyfz233-Pi3</text>
+  <text x="125" y="562" class="copy" font-size="24">3d/models/yyfz233-Pi3X</text>
+
+  <rect x="90" y="630" width="310" height="150" class="card"/>
+  <text x="125" y="686" class="label" font-size="34">Families</text>
+  <text x="125" y="728" class="copy" font-size="24">pi3</text>
+  <text x="215" y="728" class="copy" font-size="24">pi3x</text>
+  <text x="320" y="728" class="copy" font-size="24">triposr</text>
+
+  <rect x="560" y="250" width="460" height="230" class="card"/>
+  <rect x="590" y="284" width="400" height="10" fill="url(#blue)"/>
+  <text x="600" y="344" class="label" font-size="40">lux3d-cli</text>
+  <text x="600" y="390" class="copy" font-size="26">inspect</text>
+  <text x="600" y="428" class="copy" font-size="26">weights normalize</text>
+  <text x="600" y="466" class="copy" font-size="26">run</text>
+
+  <rect x="560" y="540" width="460" height="230" class="card"/>
+  <rect x="590" y="574" width="400" height="10" fill="url(#green)"/>
+  <text x="600" y="634" class="label" font-size="40">lux3d-core</text>
+  <text x="600" y="680" class="copy" font-size="26">contracts + runtime + export</text>
+  <text x="600" y="718" class="copy" font-size="26">canonical weight validation</text>
+  <text x="600" y="756" class="copy" font-size="26">PLY / OBJ generation</text>
+
+  <rect x="1170" y="230" width="340" height="150" class="card"/>
+  <text x="1205" y="286" class="label" font-size="34">Canonical Weights</text>
+  <text x="1205" y="328" class="copy" font-size="24">3d/canonical-weights</text>
+  <text x="1205" y="362" class="copy" font-size="24">manifest + checksums</text>
+
+  <rect x="1170" y="430" width="340" height="150" class="card"/>
+  <text x="1205" y="486" class="label" font-size="34">Exports</text>
+  <text x="1205" y="528" class="copy" font-size="24">Pi3 / Pi3X: .ply</text>
+  <text x="1205" y="562" class="copy" font-size="24">TripoSR: .obj</text>
+
+  <rect x="1170" y="630" width="340" height="150" class="card"/>
+  <text x="1205" y="686" class="label" font-size="34">Baseline Tooling</text>
+  <text x="1205" y="728" class="copy" font-size="24">tools/python_baseline</text>
+  <text x="1205" y="762" class="copy" font-size="24">golden + smoke parity</text>
+
+  <path class="arrow" d="M400 305H530"/>
+  <path class="arrow" d="M400 505H530"/>
+  <path class="arrow" d="M400 705H530"/>
+  <path class="arrow" d="M1020 335H1140"/>
+  <path class="arrow" d="M1020 655H1140"/>
+  <path class="arrow" d="M1280 380V420"/>
+  <path class="arrow" d="M1280 580V620"/>
+
+  <text x="122" y="842" class="small" font-size="22">repo-root = parent directory containing 3d-rs, 3d/, and tp/</text>
+</svg>

@@ -1,0 +1,19 @@
+[package]
+name = "lux3d-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "CLI routing for the CUDA-first Pi3, Pi3X, and TripoSR runtime."
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+candle-core.workspace = true
+clap.workspace = true
+lux3d-core = { path = "../lux3d-core" }
+serde_json.workspace = true

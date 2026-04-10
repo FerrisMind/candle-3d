@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">Lux3D logo</title>
+  <desc id="desc">Stylized Lux3D wordmark with a wireframe cube and runtime accents.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1f2937"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#22c55e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="640" rx="52" fill="url(#bg)"/>
+  <rect x="44" y="44" width="552" height="552" rx="36" fill="none" stroke="#334155" stroke-width="4"/>
+
+  <g fill="none" stroke="url(#accent)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M150 216 320 132 490 216 320 300Z"/>
+    <path d="M150 216V390L320 484 490 390V216"/>
+    <path d="M320 300V484"/>
+  </g>
+
+  <g fill="#e2e8f0" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">
+    <text x="320" y="560" font-size="92" font-weight="700" letter-spacing="2">Lux3D</text>
+  </g>
+
+  <g fill="#94a3b8" font-family="Segoe UI, Arial, sans-serif" text-anchor="middle">
+    <text x="320" y="602" font-size="28" letter-spacing="4">CUDA-FIRST RUST RUNTIME</text>
+  </g>
+</svg>

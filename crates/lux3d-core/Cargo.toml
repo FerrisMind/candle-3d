@@ -1,0 +1,34 @@
+[package]
+name = "lux3d-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Core CUDA-first inference runtime, contracts, and export tooling for Pi3, Pi3X, and TripoSR."
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+vision-preproc = ["dep:mistralrs-vision"]
+
+[dependencies]
+anyhow.workspace = true
+candle-core.workspace = true
+candle-nn.workspace = true
+fs2.workspace = true
+image.workspace = true
+nalgebra.workspace = true
+safetensors.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+mistralrs-vision = { version = "0.8.1", optional = true }
+mcubes.workspace = true
+lin_alg.workspace = true
+ndarray.workspace = true
+ndarray-npy.workspace = true

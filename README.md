@@ -1,75 +1,31 @@
-<!--
-  README TEMPLATE — TAURI + SVELTE
-  
-  Замените плейсхолдеры {{...}} и удалите этот комментарий.
-  
-  {{PROJECT_NAME}}     — Название проекта
-  {{PROJECT_SLUG}}     — GitHub slug (owner/repo)
-  {{LOGO_URL}}         — URL логотипа
-  {{SCREENSHOT_URL}}   — URL главного скриншота
-  {{YEAR}}             — Год копирайта
-  {{AUTHOR}}           — Имя автора
-  {{LICENSE_TYPE}}     — Тип лицензии
-
-  ─────────────────────────────────────────────────────────────────────────────
-  ОБЯЗАТЕЛЬНЫЕ ПЕРЕВОДЫ (3 языка):
-  ─────────────────────────────────────────────────────────────────────────────
-  
-  1. README.md      — English (основной)
-  2. README.RU.md   — Русский
-  3. README.PT_BR.md — Português (Brasil)
-  
-  Цвета бейджей:
-  - Активный язык (текущий файл):
-    • English:    #5B7CFA (синий)
-    • Русский:    #D65C5C (красный)
-    • Português:  #3ABF7A (зелёный)
-  - Неактивный язык: #232323 (тёмно-серый)
--->
-
-</p>
 <p align="left">
-  <!-- Для README.md (English — активный) -->
   <a href="README.md"><img src="https://img.shields.io/badge/English-5B7CFA" alt="English"></a>
   <a href="README.RU.md"><img src="https://img.shields.io/badge/Русский-232323" alt="Русский"></a>
   <a href="README.PT_BR.md"><img src="https://img.shields.io/badge/Português_BR-232323" alt="Português"></a>
-  
-  <!-- Для README.RU.md (Русский — активный)
-  <a href="README.md"><img src="https://img.shields.io/badge/English-232323" alt="English"></a>
-  <a href="README.RU.md"><img src="https://img.shields.io/badge/Русский-D65C5C" alt="Русский"></a>
-  <a href="README.PT_BR.md"><img src="https://img.shields.io/badge/Português_BR-232323" alt="Português"></a>
-  -->
-  
-  <!-- Для README.PT_BR.md (Português — активный)
-  <a href="README.md"><img src="https://img.shields.io/badge/English-232323" alt="English"></a>
-  <a href="README.RU.md"><img src="https://img.shields.io/badge/Русский-232323" alt="Русский"></a>
-  <a href="README.PT_BR.md"><img src="https://img.shields.io/badge/Português_BR-3ABF7A" alt="Português"></a>
-  -->
 </p>
 
 ---
 
 <p align="center">
-  <img src="{{LOGO_URL}}" alt="{{PROJECT_NAME}} Logo" width="512" height="512">
-
-<p align="center">
-  <b>{{PROJECT_DESCRIPTION}}</b><br>
-  {{PROJECT_TAGLINE}}
+  <img src=".github/assets/lux3d-logo.svg" alt="Lux3D logo" width="512" height="512">
 </p>
 
 <p align="center">
-  <a href="https://github.com/{{PROJECT_SLUG}}/releases"><img src="https://img.shields.io/github/v/release/{{PROJECT_SLUG}}?logo=github" alt="Latest Release"></a>
-  <!-- Раскомментируйте, если проект включён в соответствующий awesome-list:
-  <a href="https://github.com/tauri-apps/awesome-tauri"><img src="https://img.shields.io/badge/Awesome-Tauri-24C8D8?logo=tauri" alt="Awesome Tauri"></a>
-  <a href="https://github.com/TheComputerM/awesome-svelte"><img src="https://img.shields.io/badge/Awesome-Svelte-FF3E00?logo=svelte" alt="Awesome Svelte"></a>
-  <a href="https://github.com/{{PROJECT_SLUG}}/stargazers"><img src="https://img.shields.io/github/stars/{{PROJECT_SLUG}}?logo=github" alt="GitHub Stars"></a>
-  -->
+  <b>Rust workspace for clean-room 3D inference, contract inspection, and weight canonicalization.</b><br>
+  FerrisMind's CUDA-first runtime for Pi3, Pi3X, and TripoSR inside LuxRT.
 </p>
 
-<h1 align="center"></h1>
+<p align="center">
+  <img src="https://img.shields.io/badge/Author-FerrisMind-232323" alt="Author FerrisMind">
+  <img src="https://img.shields.io/badge/License-Apache--2.0-2ea44f" alt="Apache 2.0">
+  <img src="https://img.shields.io/badge/Rust-1.85+-93450a?logo=rust" alt="Rust 1.85+">
+  <img src="https://img.shields.io/badge/Runtime-CUDA%20first-76B900" alt="CUDA first runtime">
+</p>
+
+<h1 align="center">Lux3D</h1>
 
 <p align="center">
-  <img src="{{SCREENSHOT_URL}}" alt="{{PROJECT_NAME}} Interface" width="900">
+  <img src=".github/assets/lux3d-overview.svg" alt="Lux3D workspace overview" width="900">
 </p>
 
 ## 📚 Table of Contents
@@ -77,6 +33,7 @@
 - [What is this?](#-what-is-this)
 - [Demo](#-demo)
 - [Key Features](#-key-features)
+- [Repository Layout](#-repository-layout)
 - [Installation & Setup](#️-installation--setup)
 - [How to Start Using](#-how-to-start-using)
 - [System Requirements](#️-system-requirements)
@@ -85,111 +42,128 @@
 
 ## ✨ What is this?
 
-{{PROJECT_NAME}} is a native desktop application for [purpose]. Built with Rust and Tauri v2, it provides a fast, [key benefit] without requiring [limitation it removes].
+Lux3D is the Rust 2024 workspace in `3d-rs` that implements a Candle-first runtime, contract inspection, and export tooling for Pi3, Pi3X, and TripoSR. It is authored by FerrisMind and is intended to run inside the wider `LuxRT` repository, where vendor sources, raw model weights, and canonicalized weights live next to this workspace.
 
 ## 🎬 Demo
 
-<!-- Вставьте демо-видео через GitHub assets -->
-https://github.com/user-attachments/assets/your-video-id
+No public demo asset is checked in yet. The verified local entrypoints are the CLI commands below, which emit `.ply` outputs for Pi3/Pi3X and `.obj` outputs for TripoSR.
 
 ## 🚀 Key Features
 
-- Feature 1 — description
-- Feature 2 — description
-- Feature 3 — description
-- Feature 4 — description
-- Feature 5 — description
+- `lux3d-core` implements contracts, runtime loading, geometry export, and canonical weight validation.
+- `lux3d-cli` exposes `inspect`, `weights normalize`, and `run`.
+- Supports three model families: `pi3`, `pi3x`, and `triposr`.
+- Keeps canonical safetensors under `3d/canonical-weights/<family>` instead of mutating vendor trees.
+- Ships Python baseline tooling in [`tools/python_baseline/README.md`](tools/python_baseline/README.md) for parity capture and weight normalization.
+- Separates repository licensing from upstream vendor/model licenses and surfaces per-family license policy through `inspect`.
 
-### Hardware Acceleration
+## 🗂️ Repository Layout
 
-| Backend | Status | Notes |
-|---------|:------:|-------|
-| CPU | ✅ | Default, works everywhere |
-| CUDA (NVIDIA) | ✅ | Requires CUDA toolkit |
-| Metal (Apple) | ✅ | macOS only |
-| Intel MKL | ⚠️ | Optional |
+| Path | Purpose |
+|------|---------|
+| `crates/lux3d-core` | Core runtime, contracts, geometry/export code, and weight validation |
+| `crates/lux3d-cli` | CLI front-end for inspection, normalization, and inference runs |
+| `tools/python_baseline` | Python parity tooling and canonical-weight normalization scripts |
+| `../3d/models` | Raw upstream weights expected by the runtime |
+| `../3d/canonical-weights` | Normalized safetensors, manifests, and checksums |
+| `../tp/3d` | Vendor source-of-truth repositories used for contract inspection |
+
+`--repo-root` always refers to the parent LuxRT directory that contains `3d-rs`, `3d/`, and `tp/`.
 
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
 
-- Node.js (for frontend build)
-- Rust toolchain (for backend)
-- For CUDA: NVIDIA GPU with CUDA toolkit
-- For Metal: macOS with Apple Silicon
+- Rust 1.85 or newer
+- Cargo with support for `edition = "2024"`
+- Python 3.x for normalization and baseline tooling
+- NVIDIA GPU plus CUDA runtime for verified `run` commands
+- A LuxRT repo root that contains `3d-rs`, `3d/`, and `tp/`
 
-### Development
+### Expected Parent Layout
 
-```bash
-# Install dependencies
-npm install
-
-# Run with CPU backend
-npm run tauri:dev:cpu
-
-# Run with CUDA backend (NVIDIA GPU)
-npm run tauri:dev:cuda
-
-# Platform-aware development
-npm run app:dev
+```text
+<repo-root>/
+  3d-rs/
+  3d/
+    models/
+    canonical-weights/
+    _generated/
+  tp/
+    3d/
+      Pi3/
+      TripoSR/
 ```
 
-### Build
+### Workspace Checks
 
-```bash
-# Build with CPU backend
-npm run tauri:build:cpu
-
-# Build with CUDA backend
-npm run tauri:build:cuda
+```powershell
+cargo metadata --no-deps
+cargo run -p lux3d-cli -- --help
 ```
 
-### Quality Checks
+### Python Baseline Tooling
 
-```bash
-npm run lint          # ESLint
-npm run lint:fix      # ESLint with auto-fix
-npm run check         # Svelte type checking
-npm run format        # Prettier formatting
-npm run test          # Vitest tests
-```
-
-### Rust-specific (from src-tauri/)
-
-```bash
-cargo clippy          # Linting
-cargo test            # Unit tests
-cargo audit           # Security audit
-```
+See [`tools/python_baseline/README.md`](tools/python_baseline/README.md) for environment creation plus golden/smoke dump commands.
 
 ## 📖 How to Start Using
 
-1. Build or download the application
-2. Download required models/data (if applicable)
-3. Launch {{PROJECT_NAME}}
-4. Configure through the interface
-5. Start using!
+### Inspect Contracts And License Notes
+
+```powershell
+cargo run -p lux3d-cli -- inspect --repo-root H:\GitHub\LuxRT pi3
+cargo run -p lux3d-cli -- inspect --repo-root H:\GitHub\LuxRT pi3x
+cargo run -p lux3d-cli -- inspect --repo-root H:\GitHub\LuxRT triposr
+```
+
+### Normalize Canonical Weights
+
+```powershell
+cargo run -p lux3d-cli -- weights normalize --repo-root H:\GitHub\LuxRT pi3
+cargo run -p lux3d-cli -- weights normalize --repo-root H:\GitHub\LuxRT pi3x
+cargo run -p lux3d-cli -- weights normalize --repo-root H:\GitHub\LuxRT triposr
+```
+
+### Run Inference Exports
+
+```powershell
+# Pi3 -> PLY
+cargo run -p lux3d-cli -- run --repo-root H:\GitHub\LuxRT pi3 --source H:\GitHub\LuxRT\tp\3d\Pi3\examples\house --output H:\GitHub\LuxRT\3d\_generated\pi3.ply
+
+# Pi3X core -> PLY
+cargo run -p lux3d-cli -- run --repo-root H:\GitHub\LuxRT pi3x --source H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\rgb --conditions H:\GitHub\LuxRT\tp\3d\Pi3\examples\room\condition.npz --output H:\GitHub\LuxRT\3d\_generated\pi3x.ply
+
+# Pi3X VO -> PLY
+cargo run -p lux3d-cli -- run --repo-root H:\GitHub\LuxRT pi3x --source H:\GitHub\LuxRT\tp\3d\Pi3\examples\skating.mp4 --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output H:\GitHub\LuxRT\3d\_generated\pi3x-vo.ply
+
+# TripoSR -> OBJ
+cargo run -p lux3d-cli -- run --repo-root H:\GitHub\LuxRT triposr --source H:\GitHub\LuxRT\tp\3d\TripoSR\examples\horse.png --mc-resolution 256 --mc-threshold 25.0 --output H:\GitHub\LuxRT\3d\_generated\triposr.obj
+```
 
 ## 🖥️ System Requirements
 
-- Windows, macOS, or Linux
-- Minimum 4 GB RAM (8+ GB recommended)
-- For GPU acceleration:
-  - NVIDIA: CUDA-compatible GPU
-  - Apple: M1/M2/M3/M4 chip (Metal)
+- Windows PowerShell examples are the reference workflow used in this repository.
+- `inspect` and `cargo metadata` do not require GPU inference support.
+- `run` currently initializes `candle_core::Device::new_cuda(0)`, so verified inference runs require CUDA-capable NVIDIA hardware.
+- Raw weights must exist under:
+  - `3d/models/yyfz233-Pi3/`
+  - `3d/models/yyfz233-Pi3X/`
+  - `3d/models/stabilityai-TripoSR/`
+- Canonical outputs are expected under `3d/canonical-weights/<family>/`.
 
 ## 🙏 Acknowledgments
 
-This project is built on top of excellent open-source work:
+This workspace stands on top of:
 
-- [Tauri](https://tauri.app/) — Desktop application framework
-- [Svelte](https://svelte.dev/) — Frontend framework
-- [Dependency](URL) — Description
-
-See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full dependency attribution.
+- Pi3 and Pi3X upstream source trees under `tp/3d/Pi3`
+- TripoSR under `tp/3d/TripoSR`
+- Candle, Clap, nalgebra, mcubes, and safetensors
+- FerrisMind as the author of the Rust workspace and repository packaging
 
 ## 📄 License
 
-{{LICENSE_TYPE}} — see [LICENSE](LICENSE)
+The code and documentation inside `3d-rs` are licensed under Apache 2.0. See [LICENSE](LICENSE).
 
-Copyright (c) {{YEAR}} {{AUTHOR}}
+Vendor source trees, raw model weights, and canonicalized model artifacts keep their upstream licenses and usage restrictions. Use `cargo run -p lux3d-cli -- inspect --repo-root <repo-root> <family>` to review the per-family license policy before redistribution.
+
+Copyright (c) 2026 FerrisMind

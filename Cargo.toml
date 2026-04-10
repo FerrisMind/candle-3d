@@ -1,0 +1,45 @@
+[workspace]
+members = [
+    "crates/lux3d-core",
+    "crates/lux3d-cli",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+version = "0.1.0"
+rust-version = "1.85"
+authors = ["FerrisMind"]
+description = "CUDA-first Rust runtime, inspection CLI, and weight tooling for Pi3, Pi3X, and TripoSR."
+homepage = "https://github.com/oxide-lab/Lux3d"
+repository = "https://github.com/oxide-lab/Lux3d"
+keywords = ["3d", "reconstruction", "candle", "cuda", "safetensors"]
+categories = ["command-line-utilities", "graphics", "science"]
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+candle-core = { version = "0.10.2", features = ["cuda"] }
+candle-nn = { version = "0.10.2", features = ["cuda"] }
+clap = { version = "4.5.54", features = ["derive", "wrap_help"] }
+fs2 = "0.4.3"
+image = "0.25.10"
+safetensors = "0.7.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+nalgebra = "0.34.2"
+mcubes = "0.1.7"
+lin_alg = "1.3.5"
+ndarray = "0.16.1"
+ndarray-npy = "0.9.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+debug = "line-tables-only"
+lto = "thin"
+codegen-units = 1
