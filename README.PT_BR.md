@@ -7,10 +7,6 @@
 ---
 
 <p align="center">
-  <img src=".github/assets/lux3d-logo.svg" alt="Logotipo Lux3D" width="512" height="512">
-</p>
-
-<p align="center">
   <b>Workspace Rust para inferência 3D clean-room, inspeção de contratos e canonicalização de pesos.</b><br>
   Runtime CUDA-first para Pi3, Pi3X e TripoSR.
 </p>
@@ -22,10 +18,6 @@
 </p>
 
 <h1 align="center">Lux3D</h1>
-
-<p align="center">
-  <img src=".github/assets/lux3d-overview.svg" alt="Visão geral do workspace Lux3D" width="900">
-</p>
 
 ## Índice
 
