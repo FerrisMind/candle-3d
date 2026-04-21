@@ -47,7 +47,7 @@ Lux3D — это Rust 2024 workspace, который предоставляет:
 
 - `lux3d-core` реализует контракты, загрузку runtime, экспорт и проверку весов.
 - `lux3d-cli` предоставляет команды `inspect`, `weights normalize` и `run`.
-- Python baseline tooling описан в [`tools/python_baseline/README.md`](tools/python_baseline/README.md).
+- Python baseline tooling описан в [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Лицензирование по каждому семейству моделей можно проверить через CLI перед распространением артефактов.
 
 ## Структура Репозитория
@@ -113,7 +113,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 ## Лицензия
 
-Код и документация этого репозитория лицензированы по Apache 2.0. См. [LICENSE](LICENSE).
+Код и документация этого репозитория лицензированы по Apache 2.0. См. [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Upstream-модельные артефакты и canonical weights сохраняют свои исходные лицензии и ограничения на использование. Перед распространением проверяй условия для конкретного семейства модели.
 

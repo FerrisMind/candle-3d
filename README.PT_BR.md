@@ -47,7 +47,7 @@ Famílias de modelos suportadas:
 
 - `lux3d-core` implementa contratos, carregamento de runtime, exportação e validação de pesos.
 - `lux3d-cli` expõe `inspect`, `weights normalize` e `run`.
-- O tooling Python de baseline está descrito em [`tools/python_baseline/README.md`](tools/python_baseline/README.md).
+- O tooling Python de baseline está descrito em [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - O licenciamento por família de modelo pode ser inspecionado pelo CLI antes da redistribuição.
 
 ## Estrutura Do Repositório
@@ -113,7 +113,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 ## Licença
 
-O código e a documentação deste repositório estão sob Apache 2.0. Veja [LICENSE](LICENSE).
+O código e a documentação deste repositório estão sob Apache 2.0. Veja [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Os artefatos de modelo upstream e os canonical weights mantêm suas licenças e restrições originais de uso. Antes de redistribuir, verifique os termos da família de modelo correspondente.
 
