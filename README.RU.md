@@ -117,5 +117,3 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 Код и документация этого репозитория лицензированы по Apache 2.0. См. [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Upstream-модельные артефакты и canonical weights сохраняют свои исходные лицензии и ограничения на использование. Перед распространением проверяй условия для конкретного семейства модели.
-
-Автор проекта: FerrisMind
