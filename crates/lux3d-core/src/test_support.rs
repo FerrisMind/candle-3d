@@ -2,7 +2,7 @@ use std::{
     fs,
     fs::{File, OpenOptions},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, OnceLock},
 };
 
@@ -110,7 +110,7 @@ pub fn resolve_raw_model_dir_for_tests(family: ModelFamily) -> anyhow::Result<Pa
     download_raw_model_dir_for_tests(family)
 }
 
-fn validate_raw_model_dir(family: ModelFamily, path: &PathBuf) -> anyhow::Result<()> {
+fn validate_raw_model_dir(family: ModelFamily, path: &Path) -> anyhow::Result<()> {
     ensure!(
         path.is_dir(),
         "raw model dir for {} does not exist: {}",

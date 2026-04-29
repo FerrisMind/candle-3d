@@ -14,7 +14,7 @@ fn assert_path_free_weight_plan(
     assert_eq!(
         expected_raw_files
             .iter()
-            .map(|name| PathBuf::from(name))
+            .map(PathBuf::from)
             .collect::<Vec<_>>(),
         spec.weight_plan.raw_files.to_vec()
     );
