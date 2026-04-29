@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/Runtime-CUDA%20first-76B900" alt="CUDA first runtime">
 </p>
 
-<h1 align="center">Lux3D</h1>
+<h1 align="center">Lux3D / candle-3d</h1>
 
 ## Índice
 
@@ -30,7 +30,7 @@
 
 ## O que é isso?
 
-Lux3D é um workspace Rust 2024 que fornece:
+Lux3D / candle-3d é um workspace Rust 2024 que fornece:
 
 - runtime Candle-first para inferência
 - inspeção de contratos para famílias de modelos suportadas
@@ -109,6 +109,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 - Cargo com suporte a `edition = "2024"`
 - Python 3.x para baseline tooling e normalização
 - GPU NVIDIA com CUDA para execuções de inferência verificadas
+- O backend Metal no macOS não foi testado neste repositório, mas pode ser teoricamente suportado.
 - Diretórios de canonical model package fornecidos por `--model-path` ou baixados automaticamente do Hugging Face para o cache do usuário
 
 ## Licença

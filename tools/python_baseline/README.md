@@ -1,6 +1,8 @@
-# Golden Python Baseline Tooling
+# Golden Python Baseline Tooling (Lux3D / candle-3d)
 
 These scripts capture source-truth baseline artifacts for Pi3, Pi3X, Pi3X VO, and TripoSR without modifying your external vendor or model sources.
+
+Note: the macOS Metal backend is not tested in this repository, but may be supported theoretically.
 
 ## Environments
 

@@ -17,8 +17,6 @@ vision-preproc = ["dep:mistralrs-vision"]
 
 [dependencies]
 anyhow.workspace = true
-candle-core.workspace = true
-candle-nn.workspace = true
 dirs.workspace = true
 fs2.workspace = true
 hf-hub.workspace = true
@@ -34,3 +32,11 @@ mcubes.workspace = true
 lin_alg.workspace = true
 ndarray.workspace = true
 ndarray-npy.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["metal"] }
+candle-nn = { workspace = true, features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+candle-core = { workspace = true, features = ["cuda"] }
+candle-nn = { workspace = true, features = ["cuda"] }
