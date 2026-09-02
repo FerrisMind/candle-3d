@@ -47,6 +47,7 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 
 - `lux3d-core` реализует контракты, загрузку runtime, экспорт и проверку весов.
 - `lux3d-cli` предоставляет команды `inspect`, `weights normalize` и `run`.
+- `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X и TripoSR.
 - Python baseline tooling описан в [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Лицензирование по каждому семейству моделей можно проверить через CLI перед распространением артефактов.
 
@@ -56,6 +57,8 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 |------|------------|
 | `crates/lux3d-core` | Основной runtime, контракты, экспорт и валидация весов |
 | `crates/lux3d-cli` | CLI-оболочка для инспекции, нормализации и инференса |
+| `crates/lux3d-server-core` | Встраиваемый Axum router и HTTP API |
+| `crates/lux3d-server` | Standalone HTTP server binary |
 | `tools/python_baseline` | Python-скрипты для parity и canonical-weight normalization |
 | `.github/assets` | Документационные ассеты проекта |
 
