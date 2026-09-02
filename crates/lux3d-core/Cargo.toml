@@ -14,6 +14,10 @@ categories.workspace = true
 [features]
 default = []
 vision-preproc = ["dep:mistralrs-vision"]
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+wgpu = ["candle-core/wgpu", "candle-nn/wgpu"]
+vulkan = ["candle-core/vulkan", "candle-nn/vulkan"]
 
 [dependencies]
 anyhow.workspace = true
