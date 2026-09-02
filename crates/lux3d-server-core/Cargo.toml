@@ -1,0 +1,51 @@
+[package]
+name = "lux3d-server-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Embeddable OpenAI-style HTTP server for Lux3D point-cloud and mesh generation."
+homepage.workspace = true
+repository.workspace = true
+keywords = ["3d", "generation", "candle", "axum", "server"]
+categories = ["web-programming::http-server", "science"]
+
+[dependencies]
+dirs.workspace = true
+anyhow.workspace = true
+async-stream = "0.3.6"
+axum = { version = "0.8.8", features = ["tokio", "multipart"] }
+base64 = "0.22.1"
+candle-core.workspace = true
+futures = "0.3.31"
+lux3d-core = { path = "../lux3d-core" }
+metrics = "0.24.3"
+metrics-exporter-prometheus = "0.18.1"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.49.0", features = ["full", "rt-multi-thread"] }
+tokio-util = { version = "0.7.18", features = ["rt"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
+tracing.workspace = true
+url = "2.5.8"
+utoipa = { version = "5.4.0", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"], optional = true }
+uuid = { version = "1.19.0", features = ["v4"] }
+zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { workspace = true, features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+candle-core = { workspace = true, features = ["cuda"] }
+
+[features]
+default = ["swagger-ui"]
+swagger-ui = ["dep:utoipa-swagger-ui"]
+cuda = ["candle-core/cuda"]
+metal = ["candle-core/metal"]
+wgpu = ["candle-core/wgpu", "lux3d-core/wgpu"]
+vulkan = ["candle-core/vulkan", "lux3d-core/vulkan"]
