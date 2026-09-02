@@ -49,6 +49,7 @@ Famílias de modelos suportadas:
 - `lux3d-cli` expõe `inspect`, `weights normalize` e `run`.
 - O tooling Python de baseline está descrito em [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - O licenciamento por família de modelo pode ser inspecionado pelo CLI antes da redistribuição.
+- **Experimental:** inferência em Vulkan e WGPU via `--device vulkan` / `--device wgpu` (build com `--features vulkan` / `--features wgpu`). Não é produção — pode ser instável, gerar resultados incorretos ou simplesmente não funcionar, dependendo do hardware e dos drivers. CUDA é o único backend verificado.
 
 ## Estrutura Do Repositório
 
@@ -103,12 +104,22 @@ cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --sou
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
+> **Backends experimentais (Vulkan / WGPU):** selecione um dispositivo não-CUDA com `--device`:
+>
+> ```powershell
+> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
+> cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
+> ```
+>
+> Esses caminhos são experimentais e não são verificados no CI. A inferência pode ser instável, produzir saída incorreta ou falhar completamente, dependendo da GPU, do driver e do SO. Use CUDA para cargas de produção.
+
 ## Requisitos Do Sistema
 
 - Rust 1.85 ou mais recente
 - Cargo com suporte a `edition = "2024"`
 - Python 3.x para baseline tooling e normalização
 - GPU NVIDIA com CUDA para execuções de inferência verificadas
+- **Experimental:** backends Vulkan e WGPU (via fork [FerrisMind/candle](https://github.com/FerrisMind/candle) `wgpu/vulkan`). Podem ser instáveis ou não funcionar em parte do hardware; não são testados no mesmo nível que CUDA.
 - O backend Metal no macOS não foi testado neste repositório, mas pode ser teoricamente suportado.
 - Diretórios de canonical model package fornecidos por `--model-path` ou baixados automaticamente do Hugging Face para o cache do usuário
 

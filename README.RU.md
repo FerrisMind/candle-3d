@@ -50,6 +50,7 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 - `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X и TripoSR.
 - Python baseline tooling описан в [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Лицензирование по каждому семейству моделей можно проверить через CLI перед распространением артефактов.
+- **Экспериментально:** инференс на Vulkan и WGPU через `--device vulkan` / `--device wgpu` (сборка с `--features vulkan` / `--features wgpu`). Не готово для продакшена — может работать нестабильно, давать неверный результат или не запускаться в зависимости от железа и драйверов. Единственный проверенный бэкенд — CUDA.
 
 ## Структура Репозитория
 
@@ -106,12 +107,22 @@ cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --sou
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
+> **Экспериментальные бэкенды (Vulkan / WGPU):** выбор устройства через `--device`:
+>
+> ```powershell
+> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
+> cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
+> ```
+>
+> Эти пути экспериментальные и не проверяются в CI. Инференс может работать нестабильно, выдавать некорректный результат или вовсе не запускаться в зависимости от GPU, драйвера и ОС. Для продакшена используй CUDA.
+
 ## Системные Требования
 
 - Rust 1.85 или новее
 - Cargo с поддержкой `edition = "2024"`
 - Python 3.x для baseline tooling и нормализации
 - NVIDIA GPU с CUDA для проверенных инференс-запусков
+- **Экспериментально:** бэкенды Vulkan и WGPU (через форк [FerrisMind/candle](https://github.com/FerrisMind/candle) `wgpu/vulkan`). Могут работать нестабильно или не работать на части железа; не тестируются на том же уровне, что CUDA.
 - Бэкенд Metal на macOS в этом репозитории не тестировался, но теоретически может поддерживаться.
 - Директории canonical model package, переданные через `--model-path`, либо автоматически скачанные из Hugging Face в пользовательский cache
 

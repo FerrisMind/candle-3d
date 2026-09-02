@@ -50,6 +50,7 @@ Supported model families:
 - `lux3d-server-core` exposes an OpenAI-style async HTTP API for Pi3, Pi3X, and TripoSR generation.
 - Python baseline tooling lives in [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Model-family-specific licensing can be inspected through the CLI before redistribution.
+- **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). Not production-ready — may be unstable, produce wrong results, or not work at all depending on hardware and drivers. CUDA is the only verified backend.
 
 ## Repository Layout
 
@@ -105,6 +106,15 @@ cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --sou
 # Auto-download canonical packages from Hugging Face into the user cache
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
+
+> **Experimental backends (Vulkan / WGPU):** select a non-CUDA device with `--device`:
+>
+> ```powershell
+> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
+> cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
+> ```
+>
+> These paths are experimental and not verified in CI. Inference may be unstable, produce incorrect output, or fail entirely depending on your GPU, driver, and OS. Use CUDA for production workloads.
 
 ### Run the HTTP Server
 
@@ -166,6 +176,7 @@ let app = axum::Router::new().nest("/api/lux3d", routes);
 - Cargo with support for `edition = "2024"`
 - Python 3.x for baseline tooling and normalization
 - CUDA-capable NVIDIA hardware for verified runtime inference
+- **Experimental:** Vulkan and WGPU backends (via [FerrisMind/candle](https://github.com/FerrisMind/candle) `wgpu/vulkan` fork). May be unstable or non-functional on some hardware; not tested to the same standard as CUDA.
 - Metal backend on macOS is not tested in this repository, but may be supported theoretically.
 - Canonical model package directories supplied with `--model-path`, or downloadable from Hugging Face into the user cache
 
