@@ -1,0 +1,25 @@
+[package]
+name = "lux3d-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Standalone HTTP server for the Lux3D / candle-3d reconstruction runtime."
+homepage.workspace = true
+repository.workspace = true
+keywords = ["3d", "reconstruction", "server", "axum"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+
+[[bin]]
+name = "lux3d-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8.8", features = ["tokio"] }
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive", "env", "wrap_help"] }
+lux3d-server-core = { path = "../lux3d-server-core" }
+tokio = { version = "1.49.0", features = ["full", "rt-multi-thread"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }

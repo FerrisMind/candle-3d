@@ -3,6 +3,7 @@ members = [
     "crates/lux3d-core",
     "crates/lux3d-cli",
     "crates/lux3d-server-core",
+    "crates/lux3d-server",
 ]
 resolver = "2"
 

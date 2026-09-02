@@ -2622,6 +2622,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lux3d-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "lux3d-server-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lux3d-server-core"
 version = "0.1.0"
 dependencies = [
