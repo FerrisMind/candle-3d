@@ -1,4 +1,44 @@
+# Rust / Cargo
 /target/
 /target_verify/
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Downloaded model weights (see scripts/download_lux3d_models.py)
+/models/
+
+# Local server runtime: uploads, jobs, generated meshes/point clouds
+/server-data/
+
+# Local test inputs (see scripts/create_test_assets.py, scripts/download_test_assets.py)
+/test-assets/
+
+# Agent / swarm orchestration logs and inference outputs
+/.swarm/
+
+# Logs
+*.log
+
+# Environment and secrets
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
