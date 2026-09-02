@@ -167,6 +167,7 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR image tokenizer forward failed: {source}"),
             })?;
+        eprintln!("[triposr-stage] image_tokens shape {:?}", *image_tokens.shape());
         let seed_tokens = bundle.triplane_tokenizer.forward(1).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR triplane tokenizer forward failed: {source}"),
@@ -178,6 +179,7 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR backbone forward failed: {source}"),
             })?;
+        eprintln!("[triposr-stage] backbone_tokens shape {:?}", *backbone_tokens.shape());
         let detokenized = bundle
             .triplane_tokenizer
             .detokenize(&backbone_tokens)
@@ -190,6 +192,7 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR post processor forward failed: {source}"),
             })?;
+        eprintln!("[triposr-stage] scene_codes shape {:?}", *scene_codes.shape());
         Ok((
             image_tokens,
             seed_tokens,
