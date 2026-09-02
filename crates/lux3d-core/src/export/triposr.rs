@@ -31,13 +31,13 @@ impl ExportStage<TripoMesh> for TripoExportStage {
 
 impl TripoExportStage {
     pub fn write_obj(&self, mesh: &TripoMeshCpu, path: &Path) -> Result<()> {
-        let file = File::create(path).map_err(|source| Lux3dError::CanonicalManifestIo {
+        let file = File::create(path).map_err(|source| Lux3dError::ModelAssetIo {
             path: path.to_path_buf(),
             source,
         })?;
         let mut writer = BufWriter::new(file);
         writeln!(writer, "# https://github.com/mikedh/trimesh").map_err(|source| {
-            Lux3dError::CanonicalManifestIo {
+            Lux3dError::ModelAssetIo {
                 path: path.to_path_buf(),
                 source,
             }
@@ -54,7 +54,7 @@ impl TripoExportStage {
                 mesh.vertex_colors[offset + 1].clamp(0.0, 1.0),
                 mesh.vertex_colors[offset + 2].clamp(0.0, 1.0)
             )
-            .map_err(|source| Lux3dError::CanonicalManifestIo {
+            .map_err(|source| Lux3dError::ModelAssetIo {
                 path: path.to_path_buf(),
                 source,
             })?;
@@ -68,14 +68,14 @@ impl TripoExportStage {
                 mesh.faces[offset + 1] + 1,
                 mesh.faces[offset + 2] + 1
             )
-            .map_err(|source| Lux3dError::CanonicalManifestIo {
+            .map_err(|source| Lux3dError::ModelAssetIo {
                 path: path.to_path_buf(),
                 source,
             })?;
         }
         writer
             .flush()
-            .map_err(|source| Lux3dError::CanonicalManifestIo {
+            .map_err(|source| Lux3dError::ModelAssetIo {
                 path: path.to_path_buf(),
                 source,
             })?;
