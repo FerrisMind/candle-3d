@@ -11,6 +11,13 @@ repository.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = []
+cuda = ["candle-core/cuda"]
+metal = ["candle-core/metal"]
+wgpu = ["candle-core/wgpu", "lux3d-core/wgpu"]
+vulkan = ["candle-core/vulkan", "lux3d-core/vulkan"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

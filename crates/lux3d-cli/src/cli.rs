@@ -66,6 +66,9 @@ pub struct RunArgs {
     #[arg(value_enum)]
     pub family: Family,
 
+    #[arg(long, value_enum, default_value = "cuda")]
+    pub device: DeviceBackend,
+
     #[arg(long)]
     pub source: PathBuf,
 
@@ -125,6 +128,27 @@ pub enum InjectCondition {
     Depth,
     Ray,
     Intrinsic,
+}
+
+/// Backend device used to run inference.
+#[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
+pub enum DeviceBackend {
+    Cpu,
+    Cuda,
+    Wgpu,
+    Vulkan,
+}
+
+impl DeviceBackend {
+    /// Resolve the backend into a candle-core device.
+    pub fn to_device(self) -> anyhow::Result<candle_core::Device> {
+        match self {
+            DeviceBackend::Cpu => Ok(candle_core::Device::Cpu),
+            DeviceBackend::Cuda => Ok(candle_core::Device::new_cuda(0)?),
+            DeviceBackend::Wgpu => Ok(candle_core::Device::new_wgpu(0)?),
+            DeviceBackend::Vulkan => Ok(candle_core::Device::new_vulkan(0)?),
+        }
+    }
 }
 
 impl Family {
@@ -236,7 +260,7 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
         canonical_dir: args.model_path.clone(),
         cache_dir: args.cache_dir.clone(),
     };
-    let device = candle_core::Device::new_cuda(0)?;
+    let device = args.device.to_device()?;
     if let Some(parent) = args
         .output
         .parent()
@@ -274,6 +298,21 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
             &args.output,
             &device,
         )?,
+    }
+
+    // Backend CPU-fallback observability: nonzero values = hidden host/CPU compute.
+    match args.device {
+        DeviceBackend::Wgpu => eprintln!(
+            "[candle-obs] wgpu cpu_fallback={} host_compute={}",
+            candle_core::wgpu_cpu_fallback_count(),
+            candle_core::wgpu_host_compute_count(),
+        ),
+        DeviceBackend::Vulkan => eprintln!(
+            "[candle-obs] vulkan cpu_fallback={} host_compute={}",
+            candle_core::vulkan_cpu_fallback_count(),
+            candle_core::vulkan_host_compute_count(),
+        ),
+        _ => {}
     }
 
     Ok(args.output)
@@ -641,6 +680,7 @@ mod tests {
         let output = std::env::temp_dir().join(format!("lux3d-cli-pi3-{}.ply", std::process::id()));
         let args = RunArgs {
             family: super::Family::Pi3,
+            device: super::DeviceBackend::Cuda,
             source: repo_root()
                 .join("tp")
                 .join("3d")
@@ -676,6 +716,7 @@ mod tests {
             std::env::temp_dir().join(format!("lux3d-cli-triposr-{}.obj", std::process::id()));
         let args = RunArgs {
             family: super::Family::Triposr,
+            device: super::DeviceBackend::Cuda,
             source: repo_root()
                 .join("tp")
                 .join("3d")
@@ -713,6 +754,7 @@ mod tests {
         ));
         let args = RunArgs {
             family: super::Family::Triposr,
+            device: super::DeviceBackend::Cuda,
             source: repo_root()
                 .join("tp")
                 .join("3d")
@@ -747,6 +789,7 @@ mod tests {
             std::env::temp_dir().join(format!("lux3d-cli-pi3x-{}.ply", std::process::id()));
         let args = RunArgs {
             family: super::Family::Pi3x,
+            device: super::DeviceBackend::Cuda,
             source: repo_root()
                 .join("tp")
                 .join("3d")
@@ -791,6 +834,7 @@ mod tests {
             std::env::temp_dir().join(format!("lux3d-cli-pi3x-vo-{}.ply", std::process::id()));
         let args = RunArgs {
             family: super::Family::Pi3x,
+            device: super::DeviceBackend::Cuda,
             source: repo_root()
                 .join("tp")
                 .join("3d")
