@@ -1,5 +1,5 @@
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, Linear, Module, VarBuilder, layer_norm};
+use candle_nn::{LayerNorm, Linear, Module, VarBuilder, attention::AttnMask, layer_norm};
 
 use super::{
     attention_math::{Rope2d, RopeEmbeddings, exact_query_chunked_sdpa, position_getter},
@@ -61,12 +61,12 @@ impl RopeAttention {
             .apply_with_embeddings(&k, rope_cache)?
             .contiguous()?;
         let out = match xs.device() {
-            candle_core::Device::Cpu => candle_nn::cpu_flash_attention::run_flash_attn_cpu::<f32>(
+            candle_core::Device::Cpu => candle_nn::attention::flash_attn::<f32>(
                 &q.transpose(1, 2)?,
                 &k.transpose(1, 2)?,
                 &v.transpose(1, 2)?,
-                None,
                 self.scale as f32,
+                AttnMask::None,
                 None,
                 None,
             )?,
@@ -245,12 +245,12 @@ impl BranchAttention {
             .apply_with_embeddings(&qkv.i((.., .., 1))?, rope_cache)?;
         let v = qkv.i((.., .., 2))?.contiguous()?;
         let out = match xs.device() {
-            candle_core::Device::Cpu => candle_nn::cpu_flash_attention::run_flash_attn_cpu::<f32>(
+            candle_core::Device::Cpu => candle_nn::attention::flash_attn::<f32>(
                 &q.transpose(1, 2)?,
                 &k.transpose(1, 2)?,
                 &v.transpose(1, 2)?,
-                None,
                 self.scale as f32,
+                AttnMask::None,
                 None,
                 None,
             )?,
