@@ -1776,8 +1776,7 @@ impl Pi3xCoreDecoder {
             height / self.patch_size,
             width / self.patch_size,
             hidden.device(),
-        )?
-        .affine(1.0, 1.0)?;
+        )?;
         let pos_special = Tensor::zeros(
             (b * n, self.patch_start_idx, 2),
             candle_core::DType::I64,

@@ -109,8 +109,8 @@ pub(crate) fn position_getter(
     for _ in 0..batch {
         for y in 0..h {
             for x in 0..w {
-                positions.push(y as i64);
-                positions.push(x as i64);
+                positions.push((y + 1) as i64);
+                positions.push((x + 1) as i64);
             }
         }
     }

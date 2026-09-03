@@ -191,13 +191,12 @@ impl Pi3Decoder {
         width: usize,
         device: &candle_core::Device,
     ) -> CandleResult<Tensor> {
-        let mut positions = position_getter(
+        let positions = position_getter(
             batch * num_views,
             height / self.patch_size,
             width / self.patch_size,
             device,
         )?;
-        positions = positions.affine(1.0, 1.0)?;
         let special = Tensor::zeros((batch * num_views, 5, 2), candle_core::DType::I64, device)?;
         Tensor::cat(&[&special, &positions], 1)
     }
