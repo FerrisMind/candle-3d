@@ -508,38 +508,40 @@ impl Pi3xPipeline {
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("Pi3X point head failed: {source}"),
         })?;
-        let xy = point_outputs[0]
+        // Keep the point math at rank-4 (batch*frames leading): the wgpu and
+        // vulkan backends cap elementwise/binary ops at rank-4, and the extra
+        // frame dim carries no information here. Rank-5 views are restored
+        // right after the math for the consumers below (pure reshapes).
+        let xy4 = point_outputs[0]
             .permute((0, 2, 3, 1))
-            .and_then(|tensor| tensor.reshape((batch, frames, height, width, 2)))
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
-                message: format!("Pi3X xy reshape failed: {source}"),
+                message: format!("Pi3X xy permute failed: {source}"),
             })?;
-        let z = point_outputs[1]
+        let z4 = point_outputs[1]
             .permute((0, 2, 3, 1))
-            .and_then(|tensor| tensor.reshape((batch, frames, height, width, 1)))
             .and_then(|tensor| tensor.clamp(f64::NEG_INFINITY, 15.0))
             .and_then(|tensor| tensor.exp())
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
-                message: format!("Pi3X z reshape failed: {source}"),
+                message: format!("Pi3X z affine failed: {source}"),
             })?;
-        let local_points = Tensor::cat(
+        let local_points4 = Tensor::cat(
             &[
-                &xy.broadcast_mul(&z)
+                &xy4.broadcast_mul(&z4)
                     .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                         message: format!("Pi3X local point xy*z failed: {source}"),
                     })?,
-                &z,
+                &z4,
             ],
             D::Minus1,
         )
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("Pi3X local point concat failed: {source}"),
         })?;
-        let rays = normalize_last_dim(
+        let rays4 = normalize_last_dim(
             &Tensor::cat(
                 &[
-                    &xy,
-                    &Tensor::ones_like(&z).map_err(|source| {
+                    &xy4,
+                    &Tensor::ones_like(&z4).map_err(|source| {
                         Lux3dError::CanonicalWeightsValidation {
                             message: format!("Pi3X ones_like failed: {source}"),
                         }
@@ -554,6 +556,16 @@ impl Pi3xPipeline {
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("Pi3X ray normalization failed: {source}"),
         })?;
+        let local_points = local_points4
+            .reshape((batch, frames, height, width, 3))
+            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                message: format!("Pi3X local point reshape failed: {source}"),
+            })?;
+        let rays = rays4
+            .reshape((batch, frames, height, width, 3))
+            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                message: format!("Pi3X rays reshape failed: {source}"),
+            })?;
         let mut camera_poses = bundle
             .camera_head
             .forward(&ret_camera, patch_h, patch_w)
@@ -587,29 +599,35 @@ impl Pi3xPipeline {
                 message: format!("Pi3X confidence reshape failed: {source}"),
             })?;
 
-        let metric_broadcast = metric.reshape((batch, 1, 1, 1, 1)).map_err(|source| {
-            Lux3dError::CanonicalWeightsValidation {
+        // Per-batch metric scaling in rank-4: broadcast against a (batch, 1,
+        // 1, 1) view instead of a rank-5 (batch, 1, 1, 1, 1) one.
+        let metric_head = metric
+            .reshape((batch, 1, 1, 1))
+            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X metric broadcast reshape failed: {source}"),
-            }
-        })?;
-        let mut points =
-            world_points_from_local_and_pose(&local_points, &camera_poses).map_err(|source| {
-                Lux3dError::CanonicalWeightsValidation {
-                    message: format!("Pi3X world point assembly failed: {source}"),
-                }
             })?;
-        points = points.broadcast_mul(&metric_broadcast).map_err(|source| {
+        let pixels = height * width;
+        let mut points = world_points_from_local_and_pose(&local_points, &camera_poses).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
-                message: format!("Pi3X point metric scaling failed: {source}"),
+                message: format!("Pi3X world point assembly failed: {source}"),
             }
         })?;
+        points = points
+            .reshape((batch, frames, pixels, 3))
+            .and_then(|tensor| tensor.broadcast_mul(&metric_head))
+            .and_then(|tensor| tensor.reshape((batch, frames, height, width, 3)))
+            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                message: format!("Pi3X point metric scaling failed: {source}"),
+            })?;
         camera_poses = scale_pose_translation(&camera_poses, &metric).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X pose metric scaling failed: {source}"),
             }
         })?;
         let local_points = local_points
-            .broadcast_mul(&metric_broadcast)
+            .reshape((batch, frames, pixels, 3))
+            .and_then(|tensor| tensor.broadcast_mul(&metric_head))
+            .and_then(|tensor| tensor.reshape((batch, frames, height, width, 3)))
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X local point metric scaling failed: {source}"),
             })?;
@@ -2556,9 +2574,26 @@ fn scale_pose_translation(poses: &Tensor, metric: &Tensor) -> Result<Tensor> {
 }
 
 fn normalize_last_dim(xs: &Tensor) -> CandleResult<Tensor> {
-    let squared = xs.sqr()?;
-    let denom = squared.sum_keepdim(D::Minus1)?.sqrt()?;
-    xs.broadcast_div(&denom)
+    let dims = xs.dims();
+    if dims.len() > 4 {
+        // Normalization is row-wise over the last dim, so collapsing the leading
+        // dims into one batch dim is numerically identical while keeping the
+        // sqr/sum/sqrt/broadcast chain rank-4 (the vulkan backend supports up to
+        // rank-4 for these elementwise/reduction ops).
+        let leading: usize = dims[..dims.len() - 2].iter().product();
+        let mut flattened = Vec::with_capacity(4);
+        flattened.push(leading);
+        flattened.extend_from_slice(&dims[dims.len() - 2..]);
+        let xs4 = xs.reshape(flattened)?;
+        let squared = xs4.sqr()?;
+        let denom = squared.sum_keepdim(D::Minus1)?.sqrt()?;
+        let out = xs4.broadcast_div(&denom)?;
+        out.reshape(dims.to_vec())
+    } else {
+        let squared = xs.sqr()?;
+        let denom = squared.sum_keepdim(D::Minus1)?.sqrt()?;
+        xs.broadcast_div(&denom)
+    }
 }
 
 fn rope_coeffs(

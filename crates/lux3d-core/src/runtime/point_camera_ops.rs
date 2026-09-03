@@ -103,21 +103,29 @@ pub(crate) fn world_points_from_local_and_pose(
     local_points: &Tensor,
     camera_poses: &Tensor,
 ) -> CandleResult<Tensor> {
-    let ones = Tensor::ones_like(&local_points.i((.., .., .., .., ..1))?)?;
-    let homo = Tensor::cat(&[local_points, &ones], D::Minus1)?;
-    let (b, n, h, w, _d) = homo.dims5()?;
-    let homo = homo.reshape((b, n, h * w, 4))?;
-    let poses = camera_poses.reshape((b, n, 4, 4))?.transpose(2, 3)?;
-    homo.matmul(&poses)?
-        .i((.., .., .., ..3))?
-        .reshape((b, n, h, w, 3))
+    let (b, n, h, w, _d) = local_points.dims5()?;
+    // Rank-5 elementwise ops are capped at rank-4 on the wgpu/vulkan
+    // backends, so flatten the frame dims for the math and restore the view
+    // at the end. Numerically identical to the rank-5 formulation.
+    let lp = local_points.reshape((b * n, h * w, 3))?;
+    let ones = Tensor::ones_like(&lp.i((.., .., ..1))?)?;
+    let homo = Tensor::cat(&[&lp, &ones], D::Minus1)?;
+    let poses = camera_poses.reshape((b * n, 4, 4))?.transpose(1, 2)?;
+    let out = homo.matmul(&poses)?.i((.., .., ..3))?;
+    out.reshape((b, n, h, w, 3))
 }
 
 pub(crate) fn export_mask_from_local_points_and_confidence(
     local_points: &Tensor,
     confidence_logits: &Tensor,
 ) -> CandleResult<Tensor> {
-    let confidence = candle_nn::ops::sigmoid(&confidence_logits.i((.., .., .., .., 0))?)?;
+    let (b, n, h, w, _c) = confidence_logits.dims5()?;
+    let confidence = candle_nn::ops::sigmoid(
+        &confidence_logits
+            .reshape((b * n, h, w, 1))?
+            .i((.., .., .., 0))?
+            .reshape((b, n, h, w))?,
+    )?;
     let confidence_mask = confidence.ge(0.1)?;
     let non_edge = non_edge_mask_from_local_points(local_points)?;
     let false_mask = Tensor::zeros(
@@ -129,8 +137,9 @@ pub(crate) fn export_mask_from_local_points_and_confidence(
 }
 
 pub(crate) fn non_edge_mask_from_local_points(local_points: &Tensor) -> CandleResult<Tensor> {
-    let depth = local_points.i((.., .., .., .., 2))?;
-    non_edge_depth_mask(&depth, 0.03)
+    let (b, n, h, w, _d) = local_points.dims5()?;
+    let depth = local_points.reshape((b * n, h, w, 3))?.i((.., .., .., 2))?;
+    non_edge_depth_mask(&depth.reshape((b, n, h, w))?, 0.03)
 }
 
 fn non_edge_depth_mask(depth: &Tensor, rtol: f64) -> CandleResult<Tensor> {
