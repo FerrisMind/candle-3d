@@ -472,7 +472,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 dependencies = [
  "ash",
  "byteorder",
@@ -539,7 +539,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 dependencies = [
  "cudaforge",
 ]
@@ -547,7 +547,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 dependencies = [
  "block2",
  "half",
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 dependencies = [
  "candle-core 0.0.174",
  "candle-metal-kernels",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "candle-ug"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 dependencies = [
  "ug",
  "ug-cuda",
@@ -589,12 +589,12 @@ dependencies = [
 [[package]]
 name = "candle-vulkan-kernels"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 
 [[package]]
 name = "candle-wgpu-kernels"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#49beb74756d4a176ec4f83ee4c49107996eff7ca"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#809f9587b528eb5a38344ae043f78d46d700d0c2"
 
 [[package]]
 name = "castaway"
@@ -1202,7 +1202,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3647,7 +3647,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4050,7 +4050,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4523,7 +4523,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5499,7 +5499,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
