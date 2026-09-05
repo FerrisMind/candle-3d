@@ -117,6 +117,20 @@ pub(crate) fn position_getter(
     Tensor::from_vec(positions, (batch, h * w, 2), device)
 }
 
+/// Peak bytes allowed for one attention scores buffer. A pi3 decoder odd-block
+/// single-shot scores tensor (heads × 8244² × f32) is ~4 GiB; allocating it
+/// fragments the CUDA memory pool (+4 GiB reserved step) and OOMs wgpu on
+/// 12 GiB cards. Override with LUX3D_MAX_SDPA_SCORES_BYTES.
+fn max_sdpa_scores_bytes() -> usize {
+    static BUDGET: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *BUDGET.get_or_init(|| {
+        std::env::var("LUX3D_MAX_SDPA_SCORES_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(768 * 1024 * 1024)
+    })
+}
+
 pub(crate) fn exact_query_chunked_sdpa(
     q: &Tensor,
     k: &Tensor,
@@ -129,8 +143,15 @@ pub(crate) fn exact_query_chunked_sdpa(
     let k_t = k.transpose(2, 3)?.contiguous()?;
     // Softmax over the last dim is row-independent, so chunking only trades
     // peak score-buffer memory for more kernel launches; a single shot keeps
-    // the GEMMs big (much faster on every GPU backend).
-    if chunk_size >= q_seq {
+    // the GEMMs big (much faster on every GPU backend) — but only while the
+    // scores buffer fits the budget, otherwise the memory pools fragment or
+    // OOM (see max_sdpa_scores_bytes).
+    let kv_len = k_t.dim(D::Minus1)?;
+    let scores_elem_bytes = if q.dtype() == DType::F32 { 4 } else { 2 };
+    let scores_bytes_per_row = q.dim(0)? * q.dim(1)? * kv_len * scores_elem_bytes;
+    let budget_chunk = (max_sdpa_scores_bytes() / scores_bytes_per_row.max(1)).max(1);
+    let effective_chunk = chunk_size.min(budget_chunk).min(q_seq).max(1);
+    if effective_chunk >= q_seq {
         let scores = q.matmul(&k_t)?;
         let attn = candle_nn::ops::softmax_last_dim(&scores)?;
         return attn.matmul(v);
@@ -139,7 +160,7 @@ pub(crate) fn exact_query_chunked_sdpa(
 
     let mut start = 0usize;
     while start < q_seq {
-        let len = (q_seq - start).min(chunk_size);
+        let len = (q_seq - start).min(effective_chunk);
         let q_chunk = q.narrow(2, start, len)?.contiguous()?;
         let scores = q_chunk.matmul(&k_t)?;
         let attn = candle_nn::ops::softmax_last_dim(&scores)?;
