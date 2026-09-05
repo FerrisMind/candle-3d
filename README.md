@@ -173,20 +173,20 @@ let app = axum::Router::new().nest("/api/lux3d", routes);
 
 ## Performance
 
-Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `31482d4f`, candle-3d `8914250` (2026-09-05):
+Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `6cdde81d`, candle-3d `4a17a8c` (2026-09-06):
 
 | model | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 frames, 518×518) | **4.82 s** | 7.91 s | 75.1 s | 1.64× | 15.6× |
-| pi3x (6 frames, 518×518) | **7.00 s** | 11.93 s | 142.4 s | 1.70× | 20.3× |
-| triposr (single image) | **1.23 s** | 3.20 s | 8.10 s | 2.60× | 6.6× |
+| pi3 (5 frames, 518×518) | **4.82 s** | 7.66 s | 77.7 s | 1.59× | 16.1× |
+| pi3x (6 frames, 518×518) | **7.00 s** | 11.43 s | 142.4 s | 1.63× | 20.3× |
+| triposr (single image) | **1.23 s** | 3.19 s | 8.10 s | 2.59× | 6.6× |
 
 Correctness: outputs of every backend × model combination were verified against the CUDA reference meshes (bounding box / center / mean delta within 1% of max extent, vertex/face counts within 0.5% — all PASS).
 
 Memory behavior under repeated inference (10-iteration loop, same process):
 
 - **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×.
-- **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`).
+- **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
 - **WGPU** — 10-iteration pi3 benchmark completes with a 9.65 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
 Known gaps: Vulkan remains 1.6–2.6× behind CUDA due to per-dispatch CPU overhead on WDDM (GPU kernels total ~0.5 s of the wall); closing it requires op fusion. WGPU is 6.6–20× behind, dominated by WGSL GEMM kernel quality — a tiled register-blocked kernel (after llama.cpp `mul_mm.comp`) is the planned fix. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).

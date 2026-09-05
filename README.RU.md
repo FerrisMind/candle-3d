@@ -119,20 +119,20 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 ## Производительность
 
-Замеры инференса (`[stage] infer`: препроцессинг + нейросетевой проход, одна итерация на процесс, без учёта загрузки весов) на NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), форк candle `wgpu/vulkan` rev `31482d4f`, candle-3d `8914250` (2026-09-05):
+Замеры инференса (`[stage] infer`: препроцессинг + нейросетевой проход, одна итерация на процесс, без учёта загрузки весов) на NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), форк candle `wgpu/vulkan` rev `6cdde81d`, candle-3d `4a17a8c` (2026-09-06):
 
 | модель | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 кадров, 518×518) | **4.82 с** | 7.91 с | 75.1 с | 1.64× | 15.6× |
-| pi3x (6 кадров, 518×518) | **7.00 с** | 11.93 с | 142.4 с | 1.70× | 20.3× |
-| triposr (одно изображение) | **1.23 с** | 3.20 с | 8.10 с | 2.60× | 6.6× |
+| pi3 (5 кадров, 518×518) | **4.82 с** | 7.66 с | 77.7 с | 1.59× | 16.1× |
+| pi3x (6 кадров, 518×518) | **7.00 с** | 11.43 с | 142.4 с | 1.63× | 20.3× |
+| triposr (одно изображение) | **1.23 с** | 3.19 с | 8.10 с | 2.59× | 6.6× |
 
 Корректность: выходы всех комбинаций бэкенд × модель сверены с эталонными мешами CUDA (дельты bbox/центра/среднего в пределах 1% от max extent, число вершин/граней в пределах 0.5% — все PASS).
 
 Поведение памяти при повторном инференсе (цикл из 10 итераций в одном процессе):
 
 - **CUDA** — потребление плоское; буфер attention scores декодера ограничен 768 MiB чанкингом по query-оси (`LUX3D_MAX_SDPA_SCORES_BYTES`) — убран ~4 GiB транзиент, который раньше фрагментировал пул CUDA и замедлял 12-гигабайтные карты ~в 100 раз.
-- **Vulkan** — плоско ~7.5 GiB; удержание памяти ограничено inflight-бюджетом (256 MiB × grace-полоса 8) и пулом GPU-буферов на 2 GiB (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`).
+- **Vulkan** — плоско ~7.5 GiB; удержание памяти ограничено inflight-бюджетом (256 MiB × grace-полоса 8) и пулом GPU-буферов на 2 GiB (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Капы батчей настроены по flush-reason профилированию: transfer-байты 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× от диспатчей — закрытие батча на каждой большой копии активаций стоило ~4-9 ms WDDM fence-signal латентности на каждый сабмит.
 - **WGPU** — 10-итерационный бенчмарк pi3 проходит с пиком VRAM 9.65 GiB и нулём ошибок (раньше OOM на ~3-й итерации); free pool / recycle backlog / in-flight удержание ограничены по байтам (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
 Известные разрывы: Vulkan отстаёт от CUDA на 1.6–2.6× из-за CPU-оверхеда на каждый диспатч под WDDM (GPU-кернелы занимают ~0.5 s стены); закрытие требует op-fusion. WGPU отстаёт на 6.6–20× — упирается в качество WGSL GEMM-кернелов; запланирован tiled register-blocked кернел (по образцу `mul_mm.comp` из llama.cpp). Criterion-харнесс для бенчмарков целых моделей — в `crates/lux3d-core/benches/` (одна пара (бэкенд, модель) на процесс: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
