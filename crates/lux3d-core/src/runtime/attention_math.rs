@@ -17,16 +17,38 @@ impl Rope2d {
     ) -> CandleResult<RopeEmbeddings> {
         let positions = positions.to_dtype(DType::U32)?;
         let half = token_dim / 2;
+        if half % 2 != 0 {
+            candle_core::bail!("rope token_dim must be divisible by 4, got {token_dim}");
+        }
         let max_position = positions.flatten_all()?.max(0)?.to_scalar::<u32>()? as usize + 1;
 
         let (cos, sin) = self.cos_sin(half, max_position, positions.device())?;
         let pos_y = positions.i((.., .., 0))?;
         let pos_x = positions.i((.., .., 1))?;
+        let cos_y = self.apply_embedding(&pos_y, &cos)?;
+        let sin_y = self.apply_embedding(&pos_y, &sin)?;
+        let cos_x = self.apply_embedding(&pos_x, &cos)?;
+        let sin_x = self.apply_embedding(&pos_x, &sin)?;
+        let quarter = half / 2;
+        // Sign-flipped sin tables fold the rotate_half negation into the
+        // precomputed tables (exact in IEEE: -(t*s) == t*(-s)).
+        let sin_alt_y = Tensor::cat(
+            &[
+                &sin_y.i((.., .., .., ..quarter))?.affine(-1.0, 0.0)?,
+                &sin_y.i((.., .., .., quarter..))?,
+            ],
+            D::Minus1,
+        )?;
+        let sin_alt_x = Tensor::cat(
+            &[
+                &sin_x.i((.., .., .., ..quarter))?.affine(-1.0, 0.0)?,
+                &sin_x.i((.., .., .., quarter..))?,
+            ],
+            D::Minus1,
+        )?;
         Ok(RopeEmbeddings {
-            cos_y: self.apply_embedding(&pos_y, &cos)?,
-            sin_y: self.apply_embedding(&pos_y, &sin)?,
-            cos_x: self.apply_embedding(&pos_x, &cos)?,
-            sin_x: self.apply_embedding(&pos_x, &sin)?,
+            cos_full: Tensor::cat(&[&cos_y, &cos_x], D::Minus1)?,
+            sin_alt_full: Tensor::cat(&[&sin_alt_y, &sin_alt_x], D::Minus1)?,
         })
     }
 
@@ -35,13 +57,23 @@ impl Rope2d {
         tokens: &Tensor,
         embeddings: &RopeEmbeddings,
     ) -> CandleResult<Tensor> {
-        let (_b, _heads, _n, d) = tokens.dims4()?;
+        // Whole-tensor form of the per-half rope
+        // (out = cat(rotate_half_pair(y)*sin + y*cos, rotate_half_pair(x)*sin
+        // + x*cos)): pairs_rot gathers the rotated partners [y2, y1, x2, x1]
+        // and sin_alt_full carries the negations, so this is bit-identical to
+        // the old path in 8 dispatches instead of ~17. rope runs per
+        // attention per layer, so the saved dispatches cut straight into the
+        // WDDM submission tax.
+        let d = tokens.dim(D::Minus1)?;
         let half = d / 2;
-        let y = tokens.i((.., .., .., ..half))?;
-        let x = tokens.i((.., .., .., half..))?;
-        let y = self.apply_rope_embedded(&y, &embeddings.cos_y, &embeddings.sin_y)?;
-        let x = self.apply_rope_embedded(&x, &embeddings.cos_x, &embeddings.sin_x)?;
-        Tensor::cat(&[&y, &x], D::Minus1)
+        let quarter = half / 2;
+        let y2 = tokens.i((.., .., .., quarter..half))?;
+        let y1 = tokens.i((.., .., .., ..quarter))?;
+        let x2 = tokens.i((.., .., .., (half + quarter)..))?;
+        let x1 = tokens.i((.., .., .., half..(half + quarter)))?;
+        let pairs_rot = Tensor::cat(&[&y2, &y1, &x2, &x1], D::Minus1)?;
+        tokens.broadcast_mul(&embeddings.cos_full)?
+            + pairs_rot.broadcast_mul(&embeddings.sin_alt_full)?
     }
 
     fn cos_sin(
@@ -70,24 +102,15 @@ impl Rope2d {
             .reshape((batch, seq_len, table.dim(D::Minus1)?))?
             .unsqueeze(1)
     }
-
-    fn apply_rope_embedded(
-        &self,
-        tokens: &Tensor,
-        cos: &Tensor,
-        sin: &Tensor,
-    ) -> CandleResult<Tensor> {
-        let rotated = rotate_half(tokens)?;
-        tokens.broadcast_mul(cos)? + rotated.broadcast_mul(sin)?
-    }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RopeEmbeddings {
-    cos_y: Tensor,
-    sin_y: Tensor,
-    cos_x: Tensor,
-    sin_x: Tensor,
+    /// cos tables for both halves concatenated: (b, 1, n, token_dim).
+    cos_full: Tensor,
+    /// sin tables for both halves with the rotate_half negation baked in:
+    /// [-sin_y2, sin_y1, -sin_x2, sin_x1], (b, 1, n, token_dim).
+    sin_alt_full: Tensor,
 }
 
 pub(crate) fn rotate_half(xs: &Tensor) -> CandleResult<Tensor> {
