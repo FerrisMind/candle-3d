@@ -329,6 +329,12 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
                     }
                 }
             }
+            if let Some(rows) = candle_core::vulkan_flush_reason_report() {
+                eprintln!("[cpu-profile] vulkan flush reasons:");
+                for (name, count) in rows {
+                    eprintln!("[cpu-profile] flush:{name:28} {count:>8}x");
+                }
+            }
             if let Some(rows) = candle_core::vulkan_cpu_profile_report() {
                 eprintln!("[cpu-profile] vulkan dispatch hot path:");
                 for (name, count, total_ms) in rows {
