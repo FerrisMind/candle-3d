@@ -70,7 +70,7 @@ impl RopeAttention {
                 None,
                 None,
             )?,
-            _ => exact_query_chunked_sdpa(&q, &k, &v, self.scale as f32, 128)?,
+            _ => exact_query_chunked_sdpa(&q, &k, &v, self.scale as f32, usize::MAX)?,
         }
         .transpose(1, 2)?
         .reshape((b, n, c))?;
@@ -253,7 +253,7 @@ impl BranchAttention {
                 None,
                 None,
             )?,
-            _ => exact_query_chunked_sdpa(&q, &k, &v, self.scale as f32, 128)?,
+            _ => exact_query_chunked_sdpa(&q, &k, &v, self.scale as f32, usize::MAX)?,
         }
         .transpose(1, 2)?
         .reshape((b, n, c))?;

@@ -307,11 +307,38 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
             candle_core::wgpu_cpu_fallback_count(),
             candle_core::wgpu_host_compute_count(),
         ),
-        DeviceBackend::Vulkan => eprintln!(
-            "[candle-obs] vulkan cpu_fallback={} host_compute={}",
-            candle_core::vulkan_cpu_fallback_count(),
-            candle_core::vulkan_host_compute_count(),
-        ),
+        #[cfg(feature = "vulkan")]
+        DeviceBackend::Vulkan => {
+            eprintln!(
+                "[candle-obs] vulkan cpu_fallback={} host_compute={}",
+                candle_core::vulkan_cpu_fallback_count(),
+                candle_core::vulkan_host_compute_count(),
+            );
+            if std::env::var_os("LUX3D_GPU_PROFILE").is_some() {
+                device.synchronize()?;
+                if let Some((wall, rows)) = candle_core::vulkan_gpu_profile_report() {
+                    eprintln!(
+                        "[gpu-profile] wall={wall:.2}s (aggregation start -> report) kernels={}",
+                        rows.len()
+                    );
+                    for (name, count, total_ms) in rows.iter().take(50) {
+                        eprintln!(
+                            "[gpu-profile] {name:44} {count:>7}x {total_ms:>10.1}ms {:>8.1}us/ea",
+                            total_ms * 1000.0 / (*count as f64)
+                        );
+                    }
+                }
+            }
+            if let Some(rows) = candle_core::vulkan_cpu_profile_report() {
+                eprintln!("[cpu-profile] vulkan dispatch hot path:");
+                for (name, count, total_ms) in rows {
+                    eprintln!(
+                        "[cpu-profile] {name:24} {count:>8}x {total_ms:>10.1}ms {:>8.1}us/ea",
+                        total_ms * 1000.0 / (count as f64)
+                    );
+                }
+            }
+        }
         _ => {}
     }
 
@@ -325,9 +352,22 @@ fn run_pi3(
     output: &Path,
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+    let t0 = std::time::Instant::now();
     let pipeline = Pi3Pipeline::load(model_assets)?;
+    if stage_time {
+        eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+    }
+    let t1 = std::time::Instant::now();
     let inference = pipeline.infer_from_path_with_interval(source, interval, device)?;
+    if stage_time {
+        eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+    }
+    let t2 = std::time::Instant::now();
     pipeline.export_ply(&inference, output)?;
+    if stage_time {
+        eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
+    }
     Ok(())
 }
 
@@ -345,6 +385,7 @@ fn run_pi3x(
     output: &Path,
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
     if vo {
         let inject_conditions = Pi3xInjectConditions {
             pose: inject_condition
@@ -357,7 +398,12 @@ fn run_pi3x(
                 .iter()
                 .any(|item| matches!(item, InjectCondition::Ray | InjectCondition::Intrinsic)),
         };
+        let t0 = std::time::Instant::now();
         let pipeline = Pi3xVoPipeline::load(model_assets)?;
+        if stage_time {
+            eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+        }
+        let t1 = std::time::Instant::now();
         let inference = pipeline.infer_from_path(
             source,
             interval,
@@ -367,11 +413,30 @@ fn run_pi3x(
             inject_conditions,
             device,
         )?;
+        if stage_time {
+            eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+        }
+        let t2 = std::time::Instant::now();
         pipeline.export_ply(&inference, output)?;
+        if stage_time {
+            eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
+        }
     } else {
+        let t0 = std::time::Instant::now();
         let pipeline = Pi3xPipeline::load(model_assets)?;
+        if stage_time {
+            eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+        }
+        let t1 = std::time::Instant::now();
         let inference = pipeline.infer_from_path(source, conditions, interval, device)?;
+        if stage_time {
+            eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+        }
+        let t2 = std::time::Instant::now();
         pipeline.export_ply(&inference, output)?;
+        if stage_time {
+            eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
+        }
     }
     Ok(())
 }
@@ -385,10 +450,27 @@ fn run_triposr(
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(mc_resolution >= 2, "--mc-resolution must be at least 2");
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+    let t0 = std::time::Instant::now();
     let pipeline = TripoSrPipeline::load(model_assets)?;
+    if stage_time {
+        eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+    }
+    let t1 = std::time::Instant::now();
     let inference = pipeline.infer_from_path(source, device)?;
+    if stage_time {
+        eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+    }
+    let t2 = std::time::Instant::now();
     let mesh = pipeline.extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)?;
+    let t3 = std::time::Instant::now();
+    if stage_time {
+        eprintln!("[stage] mesh: {:.2}s", t3.elapsed().as_secs_f64());
+    }
     pipeline.export_obj(&mesh, output)?;
+    if stage_time {
+        eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());
+    }
     Ok(())
 }
 

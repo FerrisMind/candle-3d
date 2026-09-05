@@ -48,13 +48,32 @@ impl Pi3NeuralStage {
         let height = prepared.target_size.height as usize;
         let width = prepared.target_size.width as usize;
 
+        let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+        let mut stage = |name: &str, t: &std::time::Instant| {
+            if stage_time {
+                eprintln!("[stage]   {name}: {:.2}s", t.elapsed().as_secs_f64());
+            }
+        };
+        let t = std::time::Instant::now();
         let patch_tokens = pipeline.encode_patch_tokens(&prepared.normalized_frames)?;
+        stage("encode_patch_tokens", &t);
+        let t = std::time::Instant::now();
         let decoder_hidden = pipeline.decode_hidden(&patch_tokens, frame_count, height, width)?;
+        stage("decode_hidden", &t);
+        let t = std::time::Instant::now();
         let decoder_positions =
             pipeline.decode_positions_only(&patch_tokens, frame_count, height, width)?;
+        stage("decode_positions", &t);
+        let t = std::time::Instant::now();
         let point_hidden = pipeline.point_decoder_hidden(&decoder_hidden, &decoder_positions)?;
+        stage("point_decoder_hidden", &t);
+        let t = std::time::Instant::now();
         let conf_hidden = pipeline.conf_decoder_hidden(&decoder_hidden, &decoder_positions)?;
+        stage("conf_decoder_hidden", &t);
+        let t = std::time::Instant::now();
         let camera_hidden = pipeline.camera_decoder_hidden(&decoder_hidden, &decoder_positions)?;
+        stage("camera_decoder_hidden", &t);
+        let t = std::time::Instant::now();
 
         let local_points = pipeline
             .local_points_from_head_output(&pipeline.point_head_output(
@@ -69,6 +88,8 @@ impl Pi3NeuralStage {
                 },
             )?;
 
+        stage("point_head", &t);
+        let t = std::time::Instant::now();
         let confidence_logits = pipeline
             .conf_head_output(&conf_hidden, height, width)?
             .reshape((1, frame_count, height, width, 1))
@@ -78,6 +99,8 @@ impl Pi3NeuralStage {
                 },
             )?;
 
+        stage("conf_head", &t);
+        let t = std::time::Instant::now();
         let camera_poses = pipeline
             .camera_poses_from_hidden(&camera_hidden, height / 14, width / 14)?
             .reshape((1, frame_count, 4, 4))
@@ -87,8 +110,11 @@ impl Pi3NeuralStage {
                 },
             )?;
 
+        stage("camera_head", &t);
+        let t = std::time::Instant::now();
         let points = pipeline.world_points(&local_points, &camera_poses)?;
         let export_mask = pipeline.export_mask(&local_points, &confidence_logits)?;
+        stage("postprocess", &t);
 
         Ok(Pi3TensorOutput {
             local_points,

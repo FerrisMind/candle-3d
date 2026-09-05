@@ -127,6 +127,14 @@ pub(crate) fn exact_query_chunked_sdpa(
     let q = q.affine(scale as f64, 0.0)?;
     let q_seq = q.dim(2)?;
     let k_t = k.transpose(2, 3)?.contiguous()?;
+    // Softmax over the last dim is row-independent, so chunking only trades
+    // peak score-buffer memory for more kernel launches; a single shot keeps
+    // the GEMMs big (much faster on every GPU backend).
+    if chunk_size >= q_seq {
+        let scores = q.matmul(&k_t)?;
+        let attn = candle_nn::ops::softmax_last_dim(&scores)?;
+        return attn.matmul(v);
+    }
     let mut outputs = Vec::new();
 
     let mut start = 0usize;
@@ -134,7 +142,7 @@ pub(crate) fn exact_query_chunked_sdpa(
         let len = (q_seq - start).min(chunk_size);
         let q_chunk = q.narrow(2, start, len)?.contiguous()?;
         let scores = q_chunk.matmul(&k_t)?;
-        let attn = candle_nn::ops::softmax(&scores, D::Minus1)?;
+        let attn = candle_nn::ops::softmax_last_dim(&scores)?;
         outputs.push(attn.matmul(v)?);
         start += len;
     }

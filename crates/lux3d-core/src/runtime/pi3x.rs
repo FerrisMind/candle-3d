@@ -282,12 +282,18 @@ impl Pi3xPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("failed to reshape Pi3X normalized frames: {source}"),
             })?;
+        let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+        let mut t_stage = std::time::Instant::now();
         let mut hidden = bundle
             .encoder
             .forward_patch_tokens(&image_inputs)
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X encoder forward failed: {source}"),
             })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.encoder: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
 
         let mut normalized_depths = None;
         let mut poses_rel = None;
@@ -434,6 +440,10 @@ impl Pi3xPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X decoder failed: {source}"),
             })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.decoder: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
 
         let ret_point = bundle
             .point_decoder
@@ -453,11 +463,19 @@ impl Pi3xPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X confidence decoder failed: {source}"),
             })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.head_decoders: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
         let pos_hw = pos
             .reshape((batch, frames * pos.dim(1).unwrap_or_default(), 2))
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X metric position reshape failed: {source}"),
             })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.metric_decode: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
         let metric_hidden = bundle
             .metric_decoder
             .forward(
@@ -491,6 +509,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X metric head failed: {source}"),
             })?;
 
+        if stage_time {
+            eprintln!("[stage]   pi3x.metric_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
         let point_feat = ret_point.i((.., 5.., ..)).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X point feature slice failed: {source}"),
@@ -508,6 +530,10 @@ impl Pi3xPipeline {
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("Pi3X point head failed: {source}"),
         })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.point_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
         // Keep the point math at rank-4 (batch*frames leading): the wgpu and
         // vulkan backends cap elementwise/binary ops at rank-4, and the extra
         // frame dim carries no information here. Rank-5 views are restored
@@ -574,6 +600,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X camera head failed: {source}"),
             })?;
 
+        if stage_time {
+            eprintln!("[stage]   pi3x.pose_math: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
+        t_stage = std::time::Instant::now();
         let conf_feat =
             ret_conf
                 .i((.., 5.., ..))
@@ -592,6 +622,9 @@ impl Pi3xPipeline {
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("Pi3X confidence head failed: {source}"),
         })?;
+        if stage_time {
+            eprintln!("[stage]   pi3x.conf_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+        }
         let confidence_logits = conf_outputs[0]
             .permute((0, 2, 3, 1))
             .and_then(|tensor| tensor.reshape((batch, frames, height, width, 1)))
@@ -1207,7 +1240,7 @@ impl Pi3xCrossAttentionRope {
             .apply_with_embeddings(&k, &k_cache)?
             .contiguous()?;
         let v = v.contiguous()?;
-        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, 128)?
+        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
             .reshape((b, nq, c))?;
         self.proj.forward(&out)
@@ -1453,14 +1486,28 @@ impl Pi3xOutputBlock {
     }
 
     fn forward(&self, xs: &Tensor, kernel_size: usize) -> CandleResult<Tensor> {
+        let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+        let mut t_op = std::time::Instant::now();
         let x = candle_nn::ops::replication_pad2d(xs, 1)?;
+        if stage_time {
+            eprintln!("[stage]       outblock.pad: {:.2}s", t_op.elapsed().as_secs_f64());
+        }
+        t_op = std::time::Instant::now();
         let x = self.conv_in.forward(&x)?.relu()?;
+        if stage_time {
+            eprintln!("[stage]       outblock.conv_in+relu: {:.2}s", t_op.elapsed().as_secs_f64());
+        }
+        t_op = std::time::Instant::now();
         let x = if kernel_size > 1 {
             candle_nn::ops::replication_pad2d(&x, kernel_size / 2)?
         } else {
             x
         };
-        self.conv_out.forward(&x)
+        let x = self.conv_out.forward(&x)?;
+        if stage_time {
+            eprintln!("[stage]       outblock.conv_out: {:.2}s", t_op.elapsed().as_secs_f64());
+        }
+        Ok(x)
     }
 }
 
@@ -1521,7 +1568,13 @@ impl Pi3xConvHead {
             candle_core::bail!("Pi3xConvHead only supports identity project path");
         };
 
-        for block in &self.upsample_blocks {
+        let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+        let mut t_block = std::time::Instant::now();
+        for (block_idx, block) in self.upsample_blocks.iter().enumerate() {
+            if stage_time && block_idx < 2 {
+                eprintln!("[stage]     convhead.up{}: {:.2}s", block_idx, t_block.elapsed().as_secs_f64());
+                t_block = std::time::Instant::now();
+            }
             if self.using_uv {
                 x = Tensor::cat(
                     &[
@@ -1539,7 +1592,14 @@ impl Pi3xConvHead {
             }
             x = block.forward(&x)?;
         }
+        if stage_time {
+            eprintln!("[stage]     convhead.up_last: {:.2}s", t_block.elapsed().as_secs_f64());
+        }
+        let t_up = std::time::Instant::now();
         x = x.upsample_bilinear2d(img_h, img_w, false)?;
+        if stage_time {
+            eprintln!("[stage]     convhead.bilinear: {:.2}s", t_up.elapsed().as_secs_f64());
+        }
         if self.using_uv {
             x = Tensor::cat(
                 &[
@@ -1555,9 +1615,13 @@ impl Pi3xConvHead {
                 1,
             )?;
         }
+        let t_out = std::time::Instant::now();
         let mut outputs = Vec::with_capacity(self.output_blocks.len());
         for block in &self.output_blocks {
             outputs.push(block.forward(&x, self.output_kernel_size)?);
+        }
+        if stage_time {
+            eprintln!("[stage]     convhead.output: {:.2}s", t_out.elapsed().as_secs_f64());
         }
         let _ = seq;
         Ok(outputs)
@@ -1604,7 +1668,7 @@ impl Pi3xCoreRopeAttention {
         let cache = self.rope.embeddings(positions, self.head_dim)?;
         let q = self.rope.apply_with_embeddings(&q, &cache)?.contiguous()?;
         let k = self.rope.apply_with_embeddings(&k, &cache)?.contiguous()?;
-        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, 128)?
+        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
             .reshape((b, n, c))?;
         self.proj.forward(&out)
@@ -1689,7 +1753,7 @@ impl Pi3xProjectivePoseAttention {
         let q = apply_projective_q(&q, extrinsics, patch_h, patch_w)?;
         let k = apply_projective_kv(&k, extrinsics, patch_h, patch_w)?;
         let v = apply_projective_kv(&v, extrinsics, patch_h, patch_w)?;
-        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, 128)?;
+        let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?;
         let out = apply_projective_o(&out, extrinsics, patch_h, patch_w)?;
         let out = out.transpose(1, 2)?.reshape((b, n, c))?;
         self.proj.forward(&out)

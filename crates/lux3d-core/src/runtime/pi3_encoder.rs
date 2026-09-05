@@ -42,7 +42,7 @@ impl Module for Attention {
         let q = (qkv.i(0)? * self.scale)?;
         let k = qkv.i(1)?.contiguous()?;
         let v = qkv.i(2)?.contiguous()?;
-        let attn = candle_nn::ops::softmax(&q.matmul(&k.t()?)?, D::Minus1)?;
+        let attn = candle_nn::ops::softmax_last_dim(&q.matmul(&k.t()?)?)?;
         let attn = attn.matmul(&v)?.transpose(1, 2)?.reshape((b, n, c))?;
         self.proj.forward(&attn)
     }
@@ -228,9 +228,14 @@ impl Pi3DinoEncoder {
     }
 
     pub fn forward_patch_tokens(&self, xs: &Tensor) -> CandleResult<Tensor> {
+        let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
         let mut xs = self.prepare_tokens(xs)?;
-        for block in &self.blocks {
+        for (idx, block) in self.blocks.iter().enumerate() {
+            let t = std::time::Instant::now();
             xs = block.forward(&xs)?;
+            if stage_time && (idx < 3 || idx + 1 == self.blocks.len()) {
+                eprintln!("[stage]     enc.block{idx:02}: {:.3}s", t.elapsed().as_secs_f64());
+            }
         }
         let xs = self.norm.forward(&xs)?;
         xs.i((.., 5..))
