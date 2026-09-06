@@ -177,7 +177,7 @@ Measured inference time (`[stage] infer`: preprocessing + neural pass, single it
 
 | model | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 frames, 518×518) | **4.82 s** | 7.66 s | 82.9 s | 1.59× | 17.2× |
+| pi3 (5 frames, 518×518) | **4.82 s** | 7.66 s | 54.9 s* | 1.59× | 11.4×* |
 | pi3x (6 frames, 518×518) | **7.00 s** | 11.43 s | 88.7 s | 1.63× | 12.7× |
 | triposr (single image) | **1.23 s** | 3.19 s | 6.09 s | 2.59× | 5.0× |
 
@@ -189,7 +189,7 @@ Memory behavior under repeated inference (10-iteration loop, same process):
 - **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
 - **WGPU** — 10-iteration pi3 benchmark completes with a 9.65 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
-Known gaps: Vulkan remains 1.6–2.6× behind CUDA due to per-dispatch CPU overhead on WDDM (GPU kernels total ~0.5 s of the wall); closing it requires op fusion. WGPU is 5.0–17.2× behind, dominated by WGSL GEMM kernel quality — a tiled register-blocked kernel (after llama.cpp `mul_mm.comp`) is the planned fix. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
+Known gaps: Vulkan remains 1.6–2.6× behind CUDA due to per-dispatch CPU overhead on WDDM (GPU kernels total ~0.5 s of the wall); closing it requires op fusion. WGPU is 5.0–19.5× behind (warm criterion; 60.4s/54.9s after the coop64 unaligned-GEMM fix), dominated by WGSL GEMM kernel quality — a tiled register-blocked kernel (after llama.cpp `mul_mm.comp`) is the planned fix. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
 
 ## System Requirements
 

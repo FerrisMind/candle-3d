@@ -123,7 +123,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 | модель | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 кадров, 518×518) | **4.82 с** | 7.66 с | 82.9 с | 1.59× | 17.2× |
+| pi3 (5 кадров, 518×518) | **4.82 с** | 7.66 с | 54.9 с* | 1.59× | 11.4×* |
 | pi3x (6 кадров, 518×518) | **7.00 с** | 11.43 с | 88.7 с | 1.63× | 12.7× |
 | triposr (одно изображение) | **1.23 с** | 3.19 с | 6.09 с | 2.59× | 5.0× |
 
@@ -135,7 +135,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 - **Vulkan** — плоско ~7.5 GiB; удержание памяти ограничено inflight-бюджетом (256 MiB × grace-полоса 8) и пулом GPU-буферов на 2 GiB (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Капы батчей настроены по flush-reason профилированию: transfer-байты 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× от диспатчей — закрытие батча на каждой большой копии активаций стоило ~4-9 ms WDDM fence-signal латентности на каждый сабмит.
 - **WGPU** — 10-итерационный бенчмарк pi3 проходит с пиком VRAM 9.65 GiB и нулём ошибок (раньше OOM на ~3-й итерации); free pool / recycle backlog / in-flight удержание ограничены по байтам (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
-Известные разрывы: Vulkan отстаёт от CUDA на 1.6–2.6× из-за CPU-оверхеда на каждый диспатч под WDDM (GPU-кернелы занимают ~0.5 s стены); закрытие требует op-fusion. WGPU отстаёт на 5.0–17.2× — упирается в качество WGSL GEMM-кернелов; запланирован tiled register-blocked кернел (по образцу `mul_mm.comp` из llama.cpp). Criterion-харнесс для бенчмарков целых моделей — в `crates/lux3d-core/benches/` (одна пара (бэкенд, модель) на процесс: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
+Известные разрывы: Vulkan отстаёт от CUDA на 1.6–2.6× из-за CPU-оверхеда на каждый диспатч под WDDM (GPU-кернелы занимают ~0.5 s стены); закрытие требует op-fusion. WGPU отстаёт на 5.0–19.5× (тёплый criterion; 60.4s/54.9s после фиксa coop64 для не-выровненных GEMM) — упирается в качество WGSL GEMM-кернелов; запланирован tiled register-blocked кернел (по образцу `mul_mm.comp` из llama.cpp). Criterion-харнесс для бенчмарков целых моделей — в `crates/lux3d-core/benches/` (одна пара (бэкенд, модель) на процесс: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
 
 ## Системные Требования
 
