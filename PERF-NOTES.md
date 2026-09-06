@@ -1,6 +1,6 @@
 # Performance notes: measured results and remaining levers (RTX 3060 12 GiB, Windows WDDM)
 
-Status: 2026-09-06, candle `wgpu/vulkan` rev `bb197082`, candle-3d `317d4e7`.
+Status: 2026-09-06, candle `wgpu/vulkan` rev `efb506c9`, candle-3d `8fe6a56`.
 
 ## Verified state
 
@@ -8,15 +8,53 @@ Inference wall (`[stage] infer`, single iteration per process):
 
 | model | cuda | vulkan | wgpu | vulkan/cuda | wgpu/cuda |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 frames, 518x518) | 4.82s | 7.66s | 82.9s | 1.59x | 17.2x |
-| pi3x (6 frames, 518x518) | 7.00s | 11.43s | 88.7s | 1.63x | 12.7x |
-| triposr (single image) | 1.23s | 3.19s | 6.09s | 2.59x | 5.0x |
+| pi3 (5 frames, 518x518) | 4.82s | 7.83s | 13.96s | 1.62x | 2.90x |
+| pi3x (6 frames, 518x518) | 7.00s | 11.10s | 31.84s | 1.59x | 4.55x |
+| triposr (single image) | 1.23s | 3.36s | 4.89s | 2.73x | 3.98x |
 
-Memory is flat under repeated inference on all three backends (wgpu 10-iteration
-bench: rc=0, VRAM peak 9.65 GiB, zero errors; cuda pool step eliminated by
-SDPA chunking; vulkan bounded by grace-gated inflight drain + 2 GiB pool).
+(cuda columns from the earlier same-day window; vulkan/wgpu measured after
+the fused layernorm+rope kernel. wgpu improved 82.9s -> 13.96s on pi3 and
+88.7s -> 31.84s on pi3x.)
 
-All mesh comparisons vs the cuda reference PASS on every backend.
+Memory is flat under repeated inference on all three backends (wgpu
+10-iteration bench after the fused kernel: rc=0, VRAM peak 10.4 GiB, zero
+errors; cuda pool step eliminated by SDPA chunking; vulkan bounded by
+grace-gated inflight drain + 2 GiB pool).
+
+All mesh comparisons vs the cuda reference PASS on every backend (3 models
+x vulkan+wgpu after the fused kernel; unit test exact to 0.0 on both).
+
+## Fused layernorm+rope (2026-09-06, rev efb506c9) — the lever that moved
+
+`rope_layernorm.comp/.wgsl`: one 64-lane workgroup per (b, heads, n, 64)
+row reads the STRIDED qkv head view directly, does biased-var LayerNorm +
+affine, then `out[j] = y[j]*cos[j] + y[j^quarter]*sin_alt[j]` (negations
+pre-baked in the lux3d sin tables; partner index is a XOR because quarter
+is a power of two). Routed via `candle_nn::ops::layernorm_rope_fused` /
+`rope_fused` (CustomOp3, vulkan_fwd + wgpu_fwd) at every rope site: 72
+per pi3 decode, plus pi3x core/cross attention. This collapses the
+per-head-norm slow tensor-op chain (forced by the non-contiguous qkv
+view), both surrounding `.contiguous()` copies, and the 8-op rope chain —
+~12 dispatches per q/k — into one kernel.
+
+Note: `sin_alt_full` comes back NON-contiguous from the cat/affine table
+construction on GPU backends; the old broadcast path never cared, the
+fused kernel's flat table indexing does — tables are materialized
+contiguous in `Rope2d::embeddings`.
+
+Warm criterion, one back-to-back window (10 samples/cell, patch build =
+committed code):
+
+| bench | cuda | vulkan | wgpu | prev vulkan | prev wgpu |
+|---|---:|---:|---:|---:|---:|
+| pi3/iter | 2.72s | 3.14s (1.16x) | 8.21s (3.0x) | 3.59s (1.27x) | 54.9s (19.5x) |
+| pi3x/iter | 4.09s | 4.90s (1.20x) | 24.0s (5.9x) | 5.13s (1.22x) | 60.4s (13.9x) |
+
+The wgpu wall was inter-pass driver gap on the strictly dependent chain;
+removing ~860 of ~9.5k passes (plus their GPU time) cut pi3 by 6.7x.
+Vulkan gains are smaller (submissions batch many dispatches), but the
+warm ratio dropped to 1.16x/1.20x. Remaining warm gap: 0.42s/0.81s per
+iter — dominated by the structural WDDM submit tax, not kernel count.
 
 ## Measured dead ends (do not retry on this hardware)
 
@@ -136,27 +174,28 @@ at identical builds): cuda stays 4.21s across windows while vulkan
 swings 5.1-12.2s — ambient WDDM/driver state, not code; A/B on the
 same build confirmed it.
 
-## Dispatch-reduction levers — measured closed (2026-09-06, final round)
+## Dispatch-reduction levers — final state (2026-09-06)
 
-Every reduction candidate has now been measured on the strictly
-dependent pi3x chain:
+Every reduction candidate has been measured on the strictly dependent
+chain; the fused layernorm+rope kernel above is the one that paid:
 
 | lever | result |
 |---|---|
+| FUSED LN+ROPE (new kernel, both backends) | LANDED — wgpu pi3 54.9s -> 8.21s warm, vulkan 1.16x/1.20x warm |
 | MUL_MAT_ADD bias epilogue (unaligned cm1, exact after broadcast fix) | NET-NEGATIVE on 12 GiB: warm 5.13s -> 8.85s median + OOM risk; stays behind CANDLE_LUX3D_FUSED_LINEAR |
 | SDPA single-shot on vulkan (no chunking; allocator keeps transients flat) | warm NEUTRAL (5.25s vs 5.13s) with a 4 GiB scores transient pushing VRAM peak to 11.4/12.3 GiB — reverted, chunking stays |
-| pass folding (wgpu) | NEUTRAL — the dispatch chain is almost strictly dependent, fold rate ~0 |
-| rope whole-tensor reformulation | 17 -> 8 ops, wall-neutral (chain-bound) |
+| pass folding (wgpu) | NEUTRAL alone — the dispatch chain is almost strictly dependent; the win came from removing dispatches at the source (fused kernel) |
+| rope whole-tensor reformulation | 17 -> 8 ops, wall-neutral alone; superseded by the fused kernel |
 
-The dispatch chain is strictly dependent: consecutive ops consume the
-previous op's activation. Remaining dispatch reduction therefore
-requires NEW FUSED KERNELS for specific op patterns
-(norm+mul+rope-style, ggml's RMS_NORM_MUL_ROPE), each a separate
-shader+plumbing project, with the upside bounded by the elementwise+copy
-GPU time they eliminate (~2-3s of the ~12s single-shot wall / ~1-2s of
-the ~5.2s warm loop). On a 12 GiB WDDM card this is the last structural
-lever; everything else measured has been either implemented or
-rejected with numbers.
+What remains after the fused kernel is the structural WDDM submit tax:
+~4-9 ms per submission on vulkan and inter-pass gaps on wgpu, on a chain
+that is still strictly dependent (consecutive ops consume the previous
+activation). Closing it in code would require fusing across the large
+GEMMs themselves (FlashAttention-style monolith per block), which the
+coopmat FA2 measurement already showed loses on this 12 GiB card
+(12.83s vs 11.43s chunked). On this hardware the remaining gap is a
+platform property: Linux (no WDDM fence-signaling latency) or a larger
+VRAM card would close it without code changes.
 
 ## Remaining levers (integration plans)
 

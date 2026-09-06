@@ -173,23 +173,25 @@ let app = axum::Router::new().nest("/api/lux3d", routes);
 
 ## Performance
 
-Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `e0e24758`, candle-3d (2026-09-06):
+Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `efb506c9`, candle-3d (2026-09-06):
 
 | model | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
-| pi3 (5 frames, 518×518) | **4.82 s** | 7.66 s | 54.9 s* | 1.59× | 11.4×* |
-| pi3x (6 frames, 518×518) | **7.00 s** | 11.43 s | 88.7 s | 1.63× | 12.7× |
-| triposr (single image) | **1.23 s** | 3.19 s | 6.09 s | 2.59× | 5.0× |
+| pi3 (5 frames, 518×518) | **4.82 s** | 7.83 s | 13.96 s | 1.62× | 2.90× |
+| pi3x (6 frames, 518×518) | **7.00 s** | 11.10 s | 31.84 s | 1.59× | 4.55× |
+| triposr (single image) | **1.23 s** | 3.36 s | 4.89 s | 2.73× | 3.98× |
 
-Correctness: outputs of every backend × model combination were verified against the CUDA reference meshes (bounding box / center / mean delta within 1% of max extent, vertex/face counts within 0.5% — all PASS).
+Warm-loop criterion (10 samples, steady state — the candle-bench protocol, one back-to-back window): vulkan 3.14 s / 4.90 s per iter (1.16×/1.20× of CUDA 2.72 s / 4.09 s), wgpu 8.21 s / 24.0 s (3.0×/5.9×). The biggest single lever was a fused LayerNorm+RoPE kernel (`rope_layernorm.comp`/`.wgsl` in the fork): one dispatch per q/k replaces the slow-path LayerNorm, both surrounding copies, and the 8-op rope chain at every rope site, cutting wgpu pi3 from 54.9 s to 8.21 s warm.
+
+Correctness: outputs of every backend × model combination were verified against the CUDA reference meshes (bounding box / center / mean delta within 1% of max extent, vertex/face counts within 0.5% — all PASS); the fused kernel is additionally unit-tested exact to 0.0 diff against the composed form on both backends.
 
 Memory behavior under repeated inference (10-iteration loop, same process):
 
 - **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×.
 - **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
-- **WGPU** — 10-iteration pi3 benchmark completes with a 9.65 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
+- **WGPU** — 10-iteration pi3x benchmark completes with a 10.4 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
-Known gaps: Vulkan remains 1.6–2.6× behind CUDA due to per-dispatch CPU overhead on WDDM (GPU kernels total ~0.5 s of the wall); closing it requires op fusion. WGPU is 5.0–19.5× behind (warm criterion; 60.4s/54.9s after the coop64 unaligned-GEMM fix), dominated by WGSL GEMM kernel quality — a tiled register-blocked kernel (after llama.cpp `mul_mm.comp`) is the planned fix. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
+Known gaps: the remaining Vulkan/CUDA warm gap (1.16–1.20×) is the structural WDDM submit tax (~4-9 ms per submission on a strictly dependent op chain) — a platform property code cannot reach; Linux without WDDM would close it. WGPU remains 3.0–5.9× behind warm (down from 13.9–19.5×), dominated by WGSL GEMM quality plus the same inter-pass WDDM gaps. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
 
 ## System Requirements
 
