@@ -14,6 +14,23 @@ pub(crate) fn linear(
     }
 }
 
+/// Linear forward. The fused bias-epilogue GEMM (MUL_MAT_ADD,
+/// `candle_nn::ops::mul_mat_add`) is correct on every shape but measured
+/// NET-NEGATIVE on a 12 GiB WDDM card for the dense pi3x shapes (warm
+/// criterion 5.13s -> 8.85s median, OOM risk: removing the add dispatches
+/// shifts the batch/allocator dynamics over the VRAM edge), so it is
+/// opt-in via CANDLE_LUX3D_FUSED_LINEAR=1. Default: plain unfused path.
+pub(crate) fn linear_fwd(l: &Linear, xs: &Tensor) -> CandleResult<Tensor> {
+    match l.bias() {
+        Some(bias)
+            if std::env::var("CANDLE_LUX3D_FUSED_LINEAR").as_deref() == Ok(&"1") =>
+        {
+            candle_nn::ops::mul_mat_add(xs, &l.weight().t()?, bias)
+        }
+        _ => l.forward(xs),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LayerScale {
     gamma: Tensor,
@@ -50,8 +67,8 @@ impl Mlp {
 
 impl Module for Mlp {
     fn forward(&self, xs: &Tensor) -> CandleResult<Tensor> {
-        let xs = self.fc1.forward(xs)?.gelu_erf()?;
-        self.fc2.forward(&xs)
+        let xs = linear_fwd(&self.fc1, xs)?.gelu_erf()?;
+        linear_fwd(&self.fc2, &xs)
     }
 }
 
@@ -68,7 +85,7 @@ impl GeGlu {
     }
 
     pub(crate) fn forward(&self, xs: &Tensor) -> CandleResult<Tensor> {
-        let parts = self.proj.forward(xs)?.chunk(2, candle_core::D::Minus1)?;
+        let parts = linear_fwd(&self.proj, xs)?.chunk(2, candle_core::D::Minus1)?;
         parts[0].broadcast_mul(&parts[1].gelu_erf()?)
     }
 }
