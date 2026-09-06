@@ -1,4 +1,5 @@
 use candle_core::{D, DType, IndexOp, Result as CandleResult, Tensor};
+use candle_nn::Module;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Rope2d {
@@ -46,34 +47,14 @@ impl Rope2d {
             ],
             D::Minus1,
         )?;
+        // The fused rope kernels index the tables with flat (b, n) rows, so
+        // both must be contiguous; sin_alt_full comes back non-contiguous
+        // from the cat/affine chain on GPU backends (the old broadcast path
+        // never cared).
         Ok(RopeEmbeddings {
-            cos_full: Tensor::cat(&[&cos_y, &cos_x], D::Minus1)?,
-            sin_alt_full: Tensor::cat(&[&sin_alt_y, &sin_alt_x], D::Minus1)?,
+            cos_full: Tensor::cat(&[&cos_y, &cos_x], D::Minus1)?.contiguous()?,
+            sin_alt_full: Tensor::cat(&[&sin_alt_y, &sin_alt_x], D::Minus1)?.contiguous()?,
         })
-    }
-
-    pub(crate) fn apply_with_embeddings(
-        &self,
-        tokens: &Tensor,
-        embeddings: &RopeEmbeddings,
-    ) -> CandleResult<Tensor> {
-        // Whole-tensor form of the per-half rope
-        // (out = cat(rotate_half_pair(y)*sin + y*cos, rotate_half_pair(x)*sin
-        // + x*cos)): pairs_rot gathers the rotated partners [y2, y1, x2, x1]
-        // and sin_alt_full carries the negations, so this is bit-identical to
-        // the old path in 8 dispatches instead of ~17. rope runs per
-        // attention per layer, so the saved dispatches cut straight into the
-        // WDDM submission tax.
-        let d = tokens.dim(D::Minus1)?;
-        let half = d / 2;
-        let quarter = half / 2;
-        let y2 = tokens.i((.., .., .., quarter..half))?;
-        let y1 = tokens.i((.., .., .., ..quarter))?;
-        let x2 = tokens.i((.., .., .., (half + quarter)..))?;
-        let x1 = tokens.i((.., .., .., half..(half + quarter)))?;
-        let pairs_rot = Tensor::cat(&[&y2, &y1, &x2, &x1], D::Minus1)?;
-        tokens.broadcast_mul(&embeddings.cos_full)?
-            + pairs_rot.broadcast_mul(&embeddings.sin_alt_full)?
     }
 
     fn cos_sin(
@@ -113,13 +94,75 @@ pub(crate) struct RopeEmbeddings {
     sin_alt_full: Tensor,
 }
 
-pub(crate) fn rotate_half(xs: &Tensor) -> CandleResult<Tensor> {
-    let d = xs.dim(D::Minus1)?;
+/// Whole-tensor form of the per-half rope
+/// (out = cat(rotate_half_pair(y)*sin + y*cos, rotate_half_pair(x)*sin
+/// + x*cos)): pairs_rot gathers the rotated partners [y2, y1, x2, x1]
+/// and sin_alt_full carries the negations, so this is bit-identical to
+/// the old path in 8 dispatches instead of ~17. rope runs per
+/// attention per layer, so the saved dispatches cut straight into the
+/// WDDM submission tax.
+fn rope_apply(tokens: &Tensor, embeddings: &RopeEmbeddings) -> CandleResult<Tensor> {
+    let d = tokens.dim(D::Minus1)?;
     let half = d / 2;
-    let x1 = xs.i((.., .., .., ..half))?;
-    let x2 = xs.i((.., .., .., half..))?;
-    let neg_x2 = x2.affine(-1.0, 0.0)?;
-    Tensor::cat(&[&neg_x2, &x1], D::Minus1)
+    let quarter = half / 2;
+    let y2 = tokens.i((.., .., .., quarter..half))?;
+    let y1 = tokens.i((.., .., .., ..quarter))?;
+    let x2 = tokens.i((.., .., .., (half + quarter)..))?;
+    let x1 = tokens.i((.., .., .., half..(half + quarter)))?;
+    let pairs_rot = Tensor::cat(&[&y2, &y1, &x2, &x1], D::Minus1)?;
+    tokens.broadcast_mul(&embeddings.cos_full)?
+        + pairs_rot.broadcast_mul(&embeddings.sin_alt_full)?
+}
+
+/// LayerNorm(+affine) -> rope in ONE dispatch on vulkan/wgpu
+/// (candle_nn::ops::layernorm_rope_fused): the fused kernel reads the
+/// (possibly strided) qkv head view directly, so the norm's slow tensor-op
+/// path, both surrounding .contiguous() copies, and the 8-op rope chain all
+/// collapse into a single kernel. Output is contiguous (b, h, n, head_dim).
+/// Everything else (cpu/cuda, other head dims) keeps the composed path,
+/// which is exactly the previous op sequence.
+pub(crate) fn apply_layernorm_rope(
+    q: &Tensor,
+    q_norm: &candle_nn::LayerNorm,
+    embeddings: &RopeEmbeddings,
+) -> CandleResult<Tensor> {
+    let fused_ok = (q.device().is_vulkan() || q.device().is_wgpu())
+        && q.rank() == 4
+        && q.dim(3)? == 64
+        && q.stride()[3] == 1
+        && q.dtype() == DType::F32
+        && q_norm.bias().is_some();
+    if fused_ok {
+        return candle_nn::ops::layernorm_rope_fused(
+            q,
+            q_norm.weight(),
+            q_norm.bias().unwrap(),
+            q_norm.eps() as f32,
+            &embeddings.cos_full,
+            &embeddings.sin_alt_full,
+        );
+    }
+    let q = q_norm.forward(q)?.contiguous()?;
+    rope_apply(&q, embeddings)
+}
+
+/// RoPE-only fused variant (no norm), same single kernel with apply_norm=0.
+/// Accepts strided head views (last dim contiguous), so call sites can drop
+/// the leading .contiguous() too. Output is contiguous.
+pub(crate) fn apply_rope(tokens: &Tensor, embeddings: &RopeEmbeddings) -> CandleResult<Tensor> {
+    let fused_ok = (tokens.device().is_vulkan() || tokens.device().is_wgpu())
+        && tokens.rank() == 4
+        && tokens.dim(3)? == 64
+        && tokens.stride()[3] == 1
+        && tokens.dtype() == DType::F32;
+    if fused_ok {
+        return candle_nn::ops::rope_fused(
+            tokens,
+            &embeddings.cos_full,
+            &embeddings.sin_alt_full,
+        );
+    }
+    rope_apply(tokens, embeddings)
 }
 
 pub(crate) fn position_getter(

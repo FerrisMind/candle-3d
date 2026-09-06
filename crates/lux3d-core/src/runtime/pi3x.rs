@@ -26,7 +26,9 @@ use super::vision_preproc;
 use super::{
     nn_blocks::linear_fwd,
     DeviceLocalCache,
-    attention_math::{Rope2d, exact_query_chunked_sdpa, position_getter},
+    attention_math::{
+        Rope2d, apply_layernorm_rope, apply_rope, exact_query_chunked_sdpa, position_getter,
+    },
     nn_blocks::{LayerScale, Mlp, linear},
     path_utils::sort_paths_natural,
     pi3_decoder::{load_pi3_camera_decoder, load_pi3_conf_decoder, load_pi3_point_decoder},
@@ -1228,18 +1230,12 @@ impl Pi3xCrossAttentionRope {
             .reshape((b, nk, self.num_heads, self.head_dim))?
             .transpose(1, 2)?;
 
-        let q = q.contiguous()?;
-        let k = k.contiguous()?;
         let q_cache = self.rope.embeddings(qpos, self.head_dim)?;
         let k_cache = self.rope.embeddings(kpos, self.head_dim)?;
-        let q = self
-            .rope
-            .apply_with_embeddings(&q, &q_cache)?
-            .contiguous()?;
-        let k = self
-            .rope
-            .apply_with_embeddings(&k, &k_cache)?
-            .contiguous()?;
+        // Fused rope reads the strided transpose views directly and returns
+        // contiguous outputs, so both .contiguous() calls around it drop.
+        let q = apply_rope(&q, &q_cache)?;
+        let k = apply_rope(&k, &k_cache)?;
         let v = v.contiguous()?;
         let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
@@ -1663,12 +1659,10 @@ impl Pi3xCoreRopeAttention {
             .forward(xs)?
             .reshape((b, n, 3, self.num_heads, self.head_dim))?
             .transpose(1, 3)?;
-        let q = self.q_norm.forward(&qkv.i((.., .., 0))?)?.contiguous()?;
-        let k = self.k_norm.forward(&qkv.i((.., .., 1))?)?.contiguous()?;
         let v = qkv.i((.., .., 2))?.contiguous()?;
         let cache = self.rope.embeddings(positions, self.head_dim)?;
-        let q = self.rope.apply_with_embeddings(&q, &cache)?.contiguous()?;
-        let k = self.rope.apply_with_embeddings(&k, &cache)?.contiguous()?;
+        let q = apply_layernorm_rope(&qkv.i((.., .., 0))?, &self.q_norm, &cache)?;
+        let k = apply_layernorm_rope(&qkv.i((.., .., 1))?, &self.k_norm, &cache)?;
         let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
             .reshape((b, n, c))?;

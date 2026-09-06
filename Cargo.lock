@@ -487,7 +487,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 dependencies = [
  "ash",
  "byteorder",
@@ -554,7 +554,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 dependencies = [
  "cudaforge",
 ]
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 dependencies = [
  "block2",
  "half",
@@ -577,7 +577,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 dependencies = [
  "candle-core 0.0.174",
  "candle-metal-kernels",
@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "candle-ug"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 dependencies = [
  "ug",
  "ug-cuda",
@@ -604,12 +604,12 @@ dependencies = [
 [[package]]
 name = "candle-vulkan-kernels"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 
 [[package]]
 name = "candle-wgpu-kernels"
 version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#029c5acccc8a2026c2e9c426503f4c0905b8716b"
+source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#efb506c92c166be14a2017a71541a7105a710479"
 
 [[package]]
 name = "cast"

@@ -1,8 +1,11 @@
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{LayerNorm, Linear, Module, VarBuilder, attention::AttnMask, layer_norm};
 
-use super::{nn_blocks::linear_fwd, 
-    attention_math::{Rope2d, RopeEmbeddings, exact_query_chunked_sdpa, position_getter},
+use super::{nn_blocks::linear_fwd,
+    attention_math::{
+        Rope2d, RopeEmbeddings, apply_layernorm_rope, apply_rope, exact_query_chunked_sdpa,
+        position_getter,
+    },
     nn_blocks::{LayerScale, Mlp, linear},
 };
 
@@ -15,11 +18,10 @@ struct RopeAttention {
     num_heads: usize,
     head_dim: usize,
     scale: f64,
-    rope: Rope2d,
 }
 
 impl RopeAttention {
-    fn new(vb: VarBuilder, dim: usize, num_heads: usize, rope: Rope2d) -> CandleResult<Self> {
+    fn new(vb: VarBuilder, dim: usize, num_heads: usize, _rope: Rope2d) -> CandleResult<Self> {
         let head_dim = dim / num_heads;
         Ok(Self {
             qkv: linear(vb.pp("qkv"), dim, dim * 3, true)?,
@@ -29,7 +31,6 @@ impl RopeAttention {
             num_heads,
             head_dim,
             scale: 1.0 / (head_dim as f64).sqrt(),
-            rope,
         })
     }
 }
@@ -48,18 +49,9 @@ impl RopeAttention {
             .forward(xs)?
             .reshape((b, n, 3, self.num_heads, self.head_dim))?
             .transpose(1, 3)?;
-        let q = self.q_norm.forward(&qkv.i((.., .., 0))?)?.contiguous()?;
-        let k = self.k_norm.forward(&qkv.i((.., .., 1))?)?.contiguous()?;
+        let q = apply_layernorm_rope(&qkv.i((.., .., 0))?, &self.q_norm, rope_cache)?;
+        let k = apply_layernorm_rope(&qkv.i((.., .., 1))?, &self.k_norm, rope_cache)?;
         let v = qkv.i((.., .., 2))?.contiguous()?;
-
-        let q = self
-            .rope
-            .apply_with_embeddings(&q, rope_cache)?
-            .contiguous()?;
-        let k = self
-            .rope
-            .apply_with_embeddings(&k, rope_cache)?
-            .contiguous()?;
         let out = match xs.device() {
             candle_core::Device::Cpu => candle_nn::attention::flash_attn::<f32>(
                 &q.transpose(1, 2)?,
@@ -213,11 +205,10 @@ struct BranchAttention {
     num_heads: usize,
     head_dim: usize,
     scale: f64,
-    rope: Rope2d,
 }
 
 impl BranchAttention {
-    fn new(vb: VarBuilder, dim: usize, num_heads: usize, rope: Rope2d) -> CandleResult<Self> {
+    fn new(vb: VarBuilder, dim: usize, num_heads: usize, _rope: Rope2d) -> CandleResult<Self> {
         let head_dim = dim / num_heads;
         Ok(Self {
             qkv: linear(vb.pp("qkv"), dim, dim * 3, true)?,
@@ -225,7 +216,6 @@ impl BranchAttention {
             num_heads,
             head_dim,
             scale: 1.0 / (head_dim as f64).sqrt(),
-            rope,
         })
     }
 
@@ -236,12 +226,8 @@ impl BranchAttention {
             .forward(xs)?
             .reshape((b, n, 3, self.num_heads, self.head_dim))?
             .transpose(1, 3)?;
-        let q = self
-            .rope
-            .apply_with_embeddings(&qkv.i((.., .., 0))?, rope_cache)?;
-        let k = self
-            .rope
-            .apply_with_embeddings(&qkv.i((.., .., 1))?, rope_cache)?;
+        let q = apply_rope(&qkv.i((.., .., 0))?, rope_cache)?;
+        let k = apply_rope(&qkv.i((.., .., 1))?, rope_cache)?;
         let v = qkv.i((.., .., 2))?.contiguous()?;
         let out = match xs.device() {
             candle_core::Device::Cpu => candle_nn::attention::flash_attn::<f32>(
