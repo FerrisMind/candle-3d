@@ -121,6 +121,21 @@ dispatch/pass overhead (~9.5k passes x ~6ms WDDM), the same structural
 tax as vulkan; pass-folding for provably independent dispatches is the
 next wgpu lever.
 
+## Pass folding (rev 029c5acc) — implemented, NEUTRAL on dense models
+
+encode_pending_dispatches folds consecutive deferred dispatches whose
+storage-buffer sets are pairwise disjoint into one compute pass (uniform
+ring buffers excluded from the dependency set). pi3x wgpu: 70.5s vs
+69.9s, mesh compare PASS — the dense-model dispatch chain is almost
+strictly dependent (consecutive ops share the activation tensor), so
+the fold rate is near zero. Conclusion: the ~64s of wall over ~5.9s GPU
+is inter-pass driver gap on a strictly dependent chain — removable only
+by dispatch-count reduction (op fusion in the model graph), not by
+pass-level folding. vulkan_pi3x drift (2.16x evening vs 1.22x morning
+at identical builds): cuda stays 4.21s across windows while vulkan
+swings 5.1-12.2s — ambient WDDM/driver state, not code; A/B on the
+same build confirmed it.
+
 ## Remaining levers (integration plans)
 
 ### 1. MUL_MAT_ADD — GEMM with bias epilogue (vulkan)
