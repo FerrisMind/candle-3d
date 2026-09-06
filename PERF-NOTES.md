@@ -29,6 +29,30 @@ All mesh comparisons vs the cuda reference PASS on every backend.
   per-tile dispatches pay the WDDM fence-signal tax and f32 K/V locality is
   worse than two large coopmat GEMMs. Chunked two-pass stays the default.
 
+## Warm-loop criterion results (2026-09-06, rev e0e24758)
+
+10-sample criterion runs (steady state, weights resident — the candle-bench
+protocol):
+
+| bench | cuda | vulkan | ratio |
+|---|---:|---:|---:|
+| pi3/iter | 2.80s | 3.34s | 1.19x |
+| pi3x/iter | 4.21s | 5.13s | 1.22x |
+
+The warm gap is much smaller than the single-shot gap (cold allocator/first
+iteration dominates the single-shot numbers).
+
+## MUL_MAT_ADD — implemented (guarded)
+
+mul_mm.comp BIAS_ADD epilogue + `_bias` variants from vulkan-shaders-gen +
+`VulkanStorage::matmul_bias` + `candle_nn::ops::mul_mat_add` (CustomOp3,
+vulkan-routed from lux3d `linear_fwd`). Fused ONLY for verified shapes
+(m%64==0 && n%64==0 && k%32==0, m>8, f32 -> matmul_f32_f32_aligned_cm1_bias);
+the unaligned cm1 staged-store epilogue writes bias without the matmul
+contribution on some tiles, so those shapes stay unfused (llama.cpp upstream
+does not fuse bias into coopmat either). Unit test: fused vs unfused on the
+same device.
+
 ## Remaining levers (integration plans)
 
 ### 1. MUL_MAT_ADD — GEMM with bias epilogue (vulkan)
