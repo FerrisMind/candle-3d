@@ -1,7 +1,7 @@
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{Linear, Module, VarBuilder};
 
-use super::{nn_blocks::linear, point_camera_ops::camera_pose_from_components};
+use super::{nn_blocks::linear_fwd, nn_blocks::linear, point_camera_ops::camera_pose_from_components};
 
 #[derive(Debug)]
 pub struct LinearPts3dHead {
@@ -36,7 +36,7 @@ impl LinearPts3dHead {
     ) -> CandleResult<Tensor> {
         let tokens = hidden.i((.., patch_start_idx.., ..))?;
         let (batch, _seq, _dim) = tokens.dims3()?;
-        let feat = self.proj.forward(&tokens)?;
+        let feat = linear_fwd(&self.proj, &tokens)?;
         let feat = feat.transpose(1, 2)?.reshape((
             batch,
             feat.dim(D::Minus1)?,

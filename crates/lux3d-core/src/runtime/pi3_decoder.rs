@@ -1,7 +1,7 @@
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{LayerNorm, Linear, Module, VarBuilder, attention::AttnMask, layer_norm};
 
-use super::{
+use super::{nn_blocks::linear_fwd, 
     attention_math::{Rope2d, RopeEmbeddings, exact_query_chunked_sdpa, position_getter},
     nn_blocks::{LayerScale, Mlp, linear},
 };
@@ -74,7 +74,7 @@ impl RopeAttention {
         }
         .transpose(1, 2)?
         .reshape((b, n, c))?;
-        self.proj.forward(&out)
+        linear_fwd(&self.proj, &out)
     }
 }
 
@@ -257,7 +257,7 @@ impl BranchAttention {
         }
         .transpose(1, 2)?
         .reshape((b, n, c))?;
-        self.proj.forward(&out)
+        linear_fwd(&self.proj, &out)
     }
 }
 

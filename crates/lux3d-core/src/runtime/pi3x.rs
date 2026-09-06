@@ -24,6 +24,7 @@ use crate::{
 #[cfg(feature = "vision-preproc")]
 use super::vision_preproc;
 use super::{
+    nn_blocks::linear_fwd,
     DeviceLocalCache,
     attention_math::{Rope2d, exact_query_chunked_sdpa, position_getter},
     nn_blocks::{LayerScale, Mlp, linear},
@@ -1243,7 +1244,7 @@ impl Pi3xCrossAttentionRope {
         let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
             .reshape((b, nq, c))?;
-        self.proj.forward(&out)
+        linear_fwd(&self.proj, &out)
     }
 }
 
@@ -1671,7 +1672,7 @@ impl Pi3xCoreRopeAttention {
         let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?
             .transpose(1, 2)?
             .reshape((b, n, c))?;
-        self.proj.forward(&out)
+        linear_fwd(&self.proj, &out)
     }
 }
 
@@ -1756,7 +1757,7 @@ impl Pi3xProjectivePoseAttention {
         let out = exact_query_chunked_sdpa(&q, &k, &v, self.scale, usize::MAX)?;
         let out = apply_projective_o(&out, extrinsics, patch_h, patch_w)?;
         let out = out.transpose(1, 2)?.reshape((b, n, c))?;
-        self.proj.forward(&out)
+        linear_fwd(&self.proj, &out)
     }
 }
 

@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Mutex};
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{LayerNorm, Linear, Module, VarBuilder, layer_norm};
 
-use super::{
+use super::{nn_blocks::linear_fwd, 
     nn_blocks::{LayerScale, Mlp, linear},
     resampling::compute_aa_cubic_weights,
 };
@@ -44,7 +44,7 @@ impl Module for Attention {
         let v = qkv.i(2)?.contiguous()?;
         let attn = candle_nn::ops::softmax_last_dim(&q.matmul(&k.t()?)?)?;
         let attn = attn.matmul(&v)?.transpose(1, 2)?.reshape((b, n, c))?;
-        self.proj.forward(&attn)
+        linear_fwd(&self.proj, &attn)
     }
 }
 

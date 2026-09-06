@@ -302,11 +302,24 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
 
     // Backend CPU-fallback observability: nonzero values = hidden host/CPU compute.
     match args.device {
-        DeviceBackend::Wgpu => eprintln!(
-            "[candle-obs] wgpu cpu_fallback={} host_compute={}",
-            candle_core::wgpu_cpu_fallback_count(),
-            candle_core::wgpu_host_compute_count(),
-        ),
+        DeviceBackend::Wgpu => {
+            eprintln!(
+                "[candle-obs] wgpu cpu_fallback={} host_compute={}",
+                candle_core::wgpu_cpu_fallback_count(),
+                candle_core::wgpu_host_compute_count(),
+            );
+            #[cfg(feature = "wgpu")]
+            if let Some(rows) = candle_core::wgpu_gpu_profile_report() {
+                let _ = device.synchronize();
+                eprintln!("[gpu-profile] wgpu kernels={}", rows.len());
+                for (name, count, total_ms) in rows.iter().take(40) {
+                    eprintln!(
+                        "[gpu-profile] {name:44} {count:>7}x {total_ms:>10.1}ms {:>8.1}us/ea",
+                        total_ms * 1000.0 / (*count as f64)
+                    );
+                }
+            }
+        }
         #[cfg(feature = "vulkan")]
         DeviceBackend::Vulkan => {
             eprintln!(
