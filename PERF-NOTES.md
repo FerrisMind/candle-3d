@@ -53,6 +53,30 @@ contribution on some tiles, so those shapes stay unfused (llama.cpp upstream
 does not fuse bias into coopmat either). Unit test: fused vs unfused on the
 same device.
 
+## Warm-loop wgpu (2026-09-06, rev bba156a7, post-FA2)
+
+| bench | cuda | wgpu | ratio |
+|---|---:|---:|---:|
+| pi3/iter | 2.80s | 76.9s | 27.5x |
+| pi3x/iter | 4.21s | 76.3s | 18.1x |
+
+Zero OOM/invalid across the 10-sample runs. The remaining gap is
+GPU-kernel-bound (WGSL GEMM + elementwise quality vs cuBLAS); a
+competitive WGSL GEMM remains the one open lever, sized as its own
+project (see plan below).
+
+## MUL_MAT_ADD batch>1 hazard (open, upstream-level)
+
+The forced staged coopmat epilogue writes bias without the matmul
+contribution on some tiles when batch > 1 (RTX 3060, current driver;
+batch=1 identical shapes are exact; the unaligned scalar variant is
+exact within accumulation-order noise). Shape-matrix unit test added
+(candle-nn `mul_mat_add_tests`); the tensor-level gate requires
+batch == 1 on top of m/n/k alignment. Production multi-view linears
+(batch = num_views, m = 8244) stay unfused until this is root-caused;
+candidates: subgroup-scope barrier semantics after coopMatStore to
+shared, or stage slot aliasing across cms_per_row/cms_per_col fragments.
+
 ## Remaining levers (integration plans)
 
 ### 1. MUL_MAT_ADD — GEMM with bias epilogue (vulkan)
