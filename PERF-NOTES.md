@@ -65,7 +65,28 @@ GPU-kernel-bound (WGSL GEMM + elementwise quality vs cuBLAS); a
 competitive WGSL GEMM remains the one open lever, sized as its own
 project (see plan below).
 
-## MUL_MAT_ADD batch>1 hazard (open, upstream-level)
+## MUL_MAT_ADD batch>1 failure — ROOT-CAUSED (2026-09-06, rev 64bef917)
+
+Not a barrier or stage-aliasing issue: presenting the weight with a
+single real batch made the kernel's `batch_idx_a = i03*ne02 + i02` walk
+past the 1-batch weight buffer for batches 1..n-1 — the (3,64,128,256)
+probe lost exactly two full batch planes (bias-only output). Fix:
+`candle_nn::ops::mul_mat_add` now feeds the weight as a stride-0
+broadcast view (`unsqueeze(0).broadcast_as(batch,k,n)`), matching
+candle's own broadcast_matmul; `batch_stride_a` becomes 0 and every
+batch reads weight batch 0. The shape-matrix unit test is exact on ALL
+shapes (aligned, unaligned cm1, batch>1); the alignment/batch gates are
+removed.
+
+Fusion remains opt-in (CANDLE_LUX3D_FUSED_LINEAR=1): on the 12 GiB WDDM
+card fusing the dense pi3x linears is net-negative (warm criterion
+5.13s -> 8.85s median + OOM risk — removing the add dispatches shifts
+batch/allocator dynamics over the VRAM edge).
+
+Measurement caveat learned the hard way: warm vulkan numbers drift
+strongly with ambient WDDM load (identical binary: 5.13s and 9.7s
+within one day; cuda stable at 4.21s). vulkan/cuda ratios are only
+meaningful within a single back-to-back measurement window.
 
 The forced staged coopmat epilogue writes bias without the matmul
 contribution on some tiles when batch > 1 (RTX 3060, current driver;
