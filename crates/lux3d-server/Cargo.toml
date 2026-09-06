@@ -19,6 +19,7 @@ path = "src/main.rs"
 axum = { version = "0.8.8", features = ["tokio"] }
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive", "env", "wrap_help"] }
+lux3d-core = { path = "../lux3d-core" }
 lux3d-server-core = { path = "../lux3d-server-core" }
 tokio = { version = "1.49.0", features = ["full", "rt-multi-thread"] }
 tracing = "0.1.44"

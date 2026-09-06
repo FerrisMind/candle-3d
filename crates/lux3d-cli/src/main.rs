@@ -2,6 +2,7 @@ use clap::Parser;
 use lux3d_cli::{Cli, Command, WeightsCommand, inspect_model, normalize_weights, run_model};
 
 fn main() -> anyhow::Result<()> {
+    lux3d_core::enable_reduced_precision_gemm_opt_ins();
     let cli = Cli::parse();
     match cli.command {
         Command::Inspect(args) => {

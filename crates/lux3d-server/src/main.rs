@@ -74,6 +74,7 @@ impl From<CliAccessLogFormat> for AccessLogFormat {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    lux3d_core::enable_reduced_precision_gemm_opt_ins();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("lux3d_server=info".parse()?))
         .init();
