@@ -119,7 +119,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 ## Производительность
 
-Замеры инференса (`[stage] infer`: препроцессинг + нейросетевой проход, одна итерация на процесс, без учёта загрузки весов) на NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), форк candle `wgpu/vulkan` rev `bb197082`, candle-3d `a3967e1` (2026-09-06):
+Замеры инференса (`[stage] infer`: препроцессинг + нейросетевой проход, одна итерация на процесс, без учёта загрузки весов) на NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), форк candle `wgpu/vulkan` rev `e0e24758`, candle-3d (2026-09-06):
 
 | модель | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|

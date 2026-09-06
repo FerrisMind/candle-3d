@@ -173,7 +173,7 @@ let app = axum::Router::new().nest("/api/lux3d", routes);
 
 ## Performance
 
-Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `bb197082`, candle-3d `a3967e1` (2026-09-06):
+Measured inference time (`[stage] infer`: preprocessing + neural pass, single iteration per process, weights excluded) on an NVIDIA GeForce RTX 3060 12 GiB, Windows (WDDM), candle `wgpu/vulkan` fork rev `e0e24758`, candle-3d (2026-09-06):
 
 | model | CUDA | Vulkan | WGPU | Vulkan/CUDA | WGPU/CUDA |
 |---|---:|---:|---:|---:|---:|
