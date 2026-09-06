@@ -136,6 +136,28 @@ at identical builds): cuda stays 4.21s across windows while vulkan
 swings 5.1-12.2s — ambient WDDM/driver state, not code; A/B on the
 same build confirmed it.
 
+## Dispatch-reduction levers — measured closed (2026-09-06, final round)
+
+Every reduction candidate has now been measured on the strictly
+dependent pi3x chain:
+
+| lever | result |
+|---|---|
+| MUL_MAT_ADD bias epilogue (unaligned cm1, exact after broadcast fix) | NET-NEGATIVE on 12 GiB: warm 5.13s -> 8.85s median + OOM risk; stays behind CANDLE_LUX3D_FUSED_LINEAR |
+| SDPA single-shot on vulkan (no chunking; allocator keeps transients flat) | warm NEUTRAL (5.25s vs 5.13s) with a 4 GiB scores transient pushing VRAM peak to 11.4/12.3 GiB — reverted, chunking stays |
+| pass folding (wgpu) | NEUTRAL — the dispatch chain is almost strictly dependent, fold rate ~0 |
+| rope whole-tensor reformulation | 17 -> 8 ops, wall-neutral (chain-bound) |
+
+The dispatch chain is strictly dependent: consecutive ops consume the
+previous op's activation. Remaining dispatch reduction therefore
+requires NEW FUSED KERNELS for specific op patterns
+(norm+mul+rope-style, ggml's RMS_NORM_MUL_ROPE), each a separate
+shader+plumbing project, with the upside bounded by the elementwise+copy
+GPU time they eliminate (~2-3s of the ~12s single-shot wall / ~1-2s of
+the ~5.2s warm loop). On a 12 GiB WDDM card this is the last structural
+lever; everything else measured has been either implemented or
+rejected with numbers.
+
 ## Remaining levers (integration plans)
 
 ### 1. MUL_MAT_ADD — GEMM with bias epilogue (vulkan)
