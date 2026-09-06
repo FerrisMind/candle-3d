@@ -98,6 +98,29 @@ batch == 1 on top of m/n/k alignment. Production multi-view linears
 candidates: subgroup-scope barrier semantics after coopMatStore to
 shared, or stage slot aliasing across cms_per_row/cms_per_col fragments.
 
+## Back-to-back warm criterion, one window (2026-09-06, rev e69fe16d)
+
+| bench | cuda | vulkan | wgpu |
+|---|---:|---:|---:|
+| pi3/iter | 2.82s | 3.59s (1.27x) | 54.9s (19.5x) |
+| pi3x/iter | 4.34s | 9.36s (2.16x)* | 60.4s (13.9x) |
+
+*The vulkan_pi3x window hit the slow side of the ambient-WDDM drift (the
+same build measured 1.22x earlier; cuda is stable). wgpu improved from
+76.3s/76.9s to 60.4s/54.9s after enabling coop64 for unaligned shapes.
+
+## WGSL GEMM attribution (wgpu GPU-timestamp profiler, rev 3241f1a5)
+
+pi3x GPU time by kernel (before the coop fix): matmul-warptile 515x
+20783ms (95% of GPU, 40.4ms/ea ~ 0.43 TFLOPS); the coop64 gate required
+m/n/k % 16 while pi3x linears are m=3903/1301. The kernel already
+zero-fills ragged shared-tile loads and clips stores, so the host
+%16 checks were removed: matmul-coop64 521x 2127ms (4.1ms/ea, 10x).
+GPU total ~5.9s of the ~70s wall — the remaining wgpu gap is CPU-side
+dispatch/pass overhead (~9.5k passes x ~6ms WDDM), the same structural
+tax as vulkan; pass-folding for provably independent dispatches is the
+next wgpu lever.
+
 ## Remaining levers (integration plans)
 
 ### 1. MUL_MAT_ADD — GEMM with bias epilogue (vulkan)
