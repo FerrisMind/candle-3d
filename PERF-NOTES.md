@@ -1,6 +1,37 @@
 # Performance notes: measured results and remaining levers (RTX 3060 12 GiB, Windows WDDM)
 
-Status: 2026-09-06, candle `wgpu/vulkan` rev `efb506c9`, candle-3d `8fe6a56`.
+Status: 2026-09-07, candle `wgpu/vulkan` rev `b2522dd6`, candle-3d: candle bumped efb506c9 -> b2522dd6.
+
+## Whole-model criterion on candle b2522dd6 (2026-09-07)
+
+Fresh 10-sample criterion medians, sequential runs, weights resident. This is
+the first full 9-cell sweep on the post-quick-win candle (wgpu conv_transpose2d
+gather `a1644634`, vulkan padded-B ALIGNED GEMM `5f5eb526`):
+
+| bench | cuda | vulkan | wgpu | vs efb506c9 base: cuda / vulkan / wgpu |
+|---|---:|---:|---:|---|
+| pi3/iter | 2.72s | 3.24s | 5.79s | 1.00x / 0.97x / 1.42x |
+| pi3x/iter | 4.07s | 5.0-7.2s (see note) | 10.56s | 1.01x / ~1.0x / 2.27x |
+| triposr/iter | 0.93s | 1.44s | 2.53s | 1.33x / 2.33x / 1.93x |
+
+(efb506c9 baselines: pi3 2.72/3.14/8.21s, pi3x 4.09/4.90/24.0s, triposr
+1.23/3.36/4.89s. wgpu pi3x 24.0 -> 10.6s is mostly the conv_tr gather +
+padded GEMM series; wgpu triposr base ran cold-pipeline and warm cache
+accounts for part of the further 3.64 -> 2.53s drop in this sweep.)
+
+**vulkan_pi3x timing noise, and the false regression.** An earlier sweep
+recorded 7.55s for vulkan_pi3x (+54% vs the 4.90s efb506c9 baseline) and
+looked like a pad-commit regression. Attribution work (per-shader dispatch
+histogram via a RAII wall-time guard, back-to-back on worktrees 65b33be2 vs
+HEAD): dispatch wall 9.0s (HEAD) vs 9.7s (65b33be2) over 2 iters — HEAD is
+FASTER; the pad path moved 644 scalar `matmul_f32_f32_fp32` calls (~1ms
+each) onto `matmul_f32_f32_aligned_fp32` (~23us each). Criterion sample
+spread on vulkan_pi3x is enormous: {5.03..9.85}s within ONE 10-sample run
+(cuda reproduces to +-0.5%). Conclusion: no code regression; the 7.55s was
+WDDM run-to-run variance. Report vulkan_pi3x as "min ~5.0s, median 6-7s
+depending on ambient". cuda_pi3x back-to-back re-run during the sweep
+reproduced exactly (4.068 vs 4.087s), confirming the noise is
+backend-specific (WDDM queue/sync), not machine drift.
 
 ## Verified state
 
