@@ -23,6 +23,7 @@
 
 - [What is this?](#what-is-this)
 - [Key Features](#key-features)
+- [Demo](#demo)
 - [Repository Layout](#repository-layout)
 - [Quick Start](#quick-start)
 - [Performance](#performance)
@@ -52,6 +53,10 @@ Supported model families:
 - Python baseline tooling lives in [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Model-family-specific licensing can be inspected through the CLI before redistribution.
 - **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). Not production-ready — may be unstable, produce wrong results, or not work at all depending on hardware and drivers. CUDA is the only verified backend.
+
+## Demo
+
+https://github.com/user-attachments/assets/0a9f766f-68d3-482a-9c94-c55d0c355808
 
 ## Repository Layout
 
