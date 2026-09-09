@@ -151,6 +151,88 @@ impl DeviceBackend {
     }
 }
 
+/// Human-readable device identity for demos/logs (GPU name, not just backend).
+fn describe_device(backend: DeviceBackend, device: &candle_core::Device) -> String {
+    let loc = device.location();
+    match backend {
+        DeviceBackend::Cpu => "[device] backend=cpu".to_string(),
+        DeviceBackend::Cuda => {
+            let gpu_id = match loc {
+                candle_core::DeviceLocation::Cuda { gpu_id } => gpu_id,
+                _ => 0,
+            };
+            match device.as_cuda_device() {
+                Ok(cuda) => {
+                    let stream = cuda.cuda_stream();
+                    let ctx = stream.context();
+                    let name = ctx
+                        .name()
+                        .unwrap_or_else(|_| format!("cuda:{gpu_id}"));
+                    let cc = ctx
+                        .compute_capability()
+                        .map(|(maj, min)| format!("{maj}.{min}"))
+                        .unwrap_or_else(|_| "?".to_string());
+                    let mem = ctx
+                        .total_mem()
+                        .map(|bytes| {
+                            format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+                        })
+                        .unwrap_or_else(|_| "?".to_string());
+                    format!(
+                        "[device] backend=cuda gpu=\"{name}\" compute={cc} mem={mem} id={gpu_id}"
+                    )
+                }
+                Err(_) => format!("[device] backend=cuda id={gpu_id}"),
+            }
+        }
+        DeviceBackend::Wgpu => {
+            let gpu_id = match loc {
+                candle_core::DeviceLocation::Wgpu { gpu_id } => gpu_id,
+                _ => 0,
+            };
+            #[cfg(feature = "wgpu")]
+            {
+                if let Ok(wgpu) = device.as_wgpu_device() {
+                    let driver = wgpu.adapter_driver();
+                    let driver_info = wgpu.adapter_driver_info();
+                    let driver_bit = if driver.is_empty() && driver_info.is_empty() {
+                        String::new()
+                    } else if driver_info.is_empty() {
+                        format!(" driver=\"{driver}\"")
+                    } else if driver.is_empty() {
+                        format!(" driver_info=\"{driver_info}\"")
+                    } else {
+                        format!(" driver=\"{driver}\" driver_info=\"{driver_info}\"")
+                    };
+                    return format!(
+                        "[device] backend=wgpu gpu=\"{}\" api={}{driver_bit} id={gpu_id}",
+                        wgpu.adapter_name(),
+                        wgpu.adapter_backend(),
+                    );
+                }
+            }
+            format!("[device] backend=wgpu id={gpu_id}")
+        }
+        DeviceBackend::Vulkan => {
+            let gpu_id = match loc {
+                candle_core::DeviceLocation::Vulkan { gpu_id } => gpu_id,
+                _ => 0,
+            };
+            #[cfg(feature = "vulkan")]
+            {
+                if let Ok(vk) = device.as_vulkan_device() {
+                    return format!(
+                        "[device] backend=vulkan gpu=\"{}\" type={:?} id={gpu_id}",
+                        vk.physical_device_name(),
+                        vk.physical_device_type(),
+                    );
+                }
+            }
+            format!("[device] backend=vulkan id={gpu_id}")
+        }
+    }
+}
+
 impl Family {
     pub const fn model_family(self) -> ModelFamily {
         match self {
@@ -261,6 +343,7 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
         cache_dir: args.cache_dir.clone(),
     };
     let device = args.device.to_device()?;
+    eprintln!("{}", describe_device(args.device, &device));
     if let Some(parent) = args
         .output
         .parent()
@@ -482,10 +565,10 @@ fn run_triposr(
     }
     let t2 = std::time::Instant::now();
     let mesh = pipeline.extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)?;
-    let t3 = std::time::Instant::now();
     if stage_time {
-        eprintln!("[stage] mesh: {:.2}s", t3.elapsed().as_secs_f64());
+        eprintln!("[stage] mesh: {:.2}s", t2.elapsed().as_secs_f64());
     }
+    let t3 = std::time::Instant::now();
     pipeline.export_obj(&mesh, output)?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());

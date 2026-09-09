@@ -61,9 +61,14 @@ impl TripoGeometryStage {
         let mut index_map = std::collections::HashMap::new();
         for &idx in &mesh.indices {
             let vertex = &mesh.vertices[idx];
-            let px = vertex.posit.x * 2.0 * grid.radius - grid.radius;
+            // TripoSR `tsr/models/isosurface.py`: `v_pos = v_pos[..., [2, 1, 0]]`
+            // before normalizing to [0, 1] / world radius. Without this axis
+            // reorder, vertex colors (sampled after assemble) paint the mesh
+            // as if the volume axes were swapped — same wrong look in every
+            // viewer.
+            let px = vertex.posit.z * 2.0 * grid.radius - grid.radius;
             let py = vertex.posit.y * 2.0 * grid.radius - grid.radius;
-            let pz = vertex.posit.z * 2.0 * grid.radius - grid.radius;
+            let pz = vertex.posit.x * 2.0 * grid.radius - grid.radius;
             let key = [px.to_bits(), py.to_bits(), pz.to_bits()];
             let out_idx = if let Some(existing) = index_map.get(&key) {
                 *existing

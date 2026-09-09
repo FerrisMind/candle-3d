@@ -95,12 +95,12 @@ pub(crate) struct RopeEmbeddings {
 }
 
 /// Whole-tensor form of the per-half rope
-/// (out = cat(rotate_half_pair(y)*sin + y*cos, rotate_half_pair(x)*sin
-/// + x*cos)): pairs_rot gathers the rotated partners [y2, y1, x2, x1]
-/// and sin_alt_full carries the negations, so this is bit-identical to
-/// the old path in 8 dispatches instead of ~17. rope runs per
-/// attention per layer, so the saved dispatches cut straight into the
-/// WDDM submission tax.
+/// (`out = cat(rotate_half_pair(y)*sin + y*cos, rotate_half_pair(x)*sin + x*cos)`).
+///
+/// `pairs_rot` gathers the rotated partners `[y2, y1, x2, x1]` and
+/// `sin_alt_full` carries the negations, so this is bit-identical to the
+/// old path in 8 dispatches instead of ~17. Rope runs per attention per
+/// layer, so the saved dispatches cut straight into the WDDM submission tax.
 fn rope_apply(tokens: &Tensor, embeddings: &RopeEmbeddings) -> CandleResult<Tensor> {
     let d = tokens.dim(D::Minus1)?;
     let half = d / 2;

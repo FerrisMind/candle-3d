@@ -23,7 +23,7 @@ pub(crate) fn linear(
 pub(crate) fn linear_fwd(l: &Linear, xs: &Tensor) -> CandleResult<Tensor> {
     match l.bias() {
         Some(bias)
-            if std::env::var("CANDLE_LUX3D_FUSED_LINEAR").as_deref() == Ok(&"1") =>
+            if std::env::var("CANDLE_LUX3D_FUSED_LINEAR").as_deref() == Ok("1") =>
         {
             candle_nn::ops::mul_mat_add(xs, &l.weight().t()?, bias)
         }

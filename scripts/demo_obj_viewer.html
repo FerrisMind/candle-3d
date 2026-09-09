@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripoSR OBJ preview</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1a1d23; color: #e8eaed; font-family: Segoe UI, sans-serif; overflow: hidden; }
+    #bar { position: absolute; left: 12px; top: 10px; z-index: 2; font-size: 13px; opacity: 0.9; pointer-events: none; }
+    #err { position: absolute; left: 12px; bottom: 12px; z-index: 2; color: #ff8a80; max-width: 80%; white-space: pre-wrap; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="bar">TripoSR OBJ · drag to orbit · scroll to zoom</div>
+  <div id="err"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+
+    const params = new URLSearchParams(location.search);
+    const objUrl = params.get("obj") || "model.obj";
+    const errEl = document.getElementById("err");
+    const bar = document.getElementById("bar");
+    bar.textContent = `TripoSR OBJ · ${objUrl} · drag to orbit · scroll to zoom`;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1d23);
+
+    const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.01, 1000);
+    camera.position.set(1.8, 1.2, 2.2);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // Soft fill only — TripoSR colors are already baked; avoid specular that
+    // makes the paint look rotated relative to the silhouette.
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+    const grid = new THREE.GridHelper(4, 16, 0x3a3f4b, 0x2a2f38);
+    scene.add(grid);
+
+    // Same display bake as TripoSR `to_gradio_3d_orientation` (G:\TripoSR\tsr\utils.py):
+    // Rx(-90°) then Ry(+90°). Applied once so vertex colors stay locked to geometry.
+    function applyTripoSrDisplayOrientation(object) {
+      const rx = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+      const ry = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+      const m = new THREE.Matrix4().multiplyMatrices(ry, rx);
+      object.applyMatrix4(m);
+      object.updateMatrixWorld(true);
+      object.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return;
+        child.geometry.computeVertexNormals();
+      });
+    }
+
+    function fitCamera(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      object.position.sub(center);
+      object.updateMatrixWorld(true);
+      controls.target.set(0, 0, 0);
+      camera.position.set(maxDim * 1.6, maxDim * 0.85, maxDim * 1.6);
+      camera.near = maxDim / 100;
+      camera.far = maxDim * 100;
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    // TripoSR OBJ stores RGB on `v` lines (no MTL/UV texture).
+    new OBJLoader().load(
+      objUrl,
+      (obj) => {
+        let colored = 0;
+        obj.traverse((child) => {
+          if (!child.isMesh) return;
+          const hasColor = Boolean(child.geometry?.attributes?.color);
+          if (hasColor) {
+            colored += 1;
+            // Colors from OBJLoader are already linear; present them flat.
+            child.material = new THREE.MeshBasicMaterial({
+              vertexColors: true,
+              side: THREE.DoubleSide,
+            });
+          } else {
+            child.material = new THREE.MeshBasicMaterial({
+              color: 0xc5ccd8,
+              side: THREE.DoubleSide,
+            });
+          }
+        });
+
+        applyTripoSrDisplayOrientation(obj);
+        scene.add(obj);
+        fitCamera(obj);
+
+        bar.textContent = colored
+          ? `TripoSR OBJ · vertex colors · Gradio orientation · drag to orbit · scroll to zoom`
+          : `TripoSR OBJ · no vertex colors · Gradio orientation · drag to orbit · scroll to zoom`;
+      },
+      undefined,
+      (e) => {
+        errEl.textContent = `Failed to load ${objUrl}\n${e?.message || e}`;
+      }
+    );
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    (function tick() {
+      requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>

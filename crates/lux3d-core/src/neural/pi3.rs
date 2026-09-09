@@ -49,7 +49,7 @@ impl Pi3NeuralStage {
         let width = prepared.target_size.width as usize;
 
         let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
-        let mut stage = |name: &str, t: &std::time::Instant| {
+        let stage = |name: &str, t: &std::time::Instant| {
             if stage_time {
                 eprintln!("[stage]   {name}: {:.2}s", t.elapsed().as_secs_f64());
             }
