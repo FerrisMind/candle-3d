@@ -489,8 +489,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "candle-core"
-version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
+version = "0.1.0"
 dependencies = [
  "ash",
  "byteorder",
@@ -556,7 +555,6 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
 dependencies = [
  "cudaforge",
 ]
@@ -564,7 +562,6 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
 dependencies = [
  "block2",
  "half",
@@ -578,10 +575,9 @@ dependencies = [
 
 [[package]]
 name = "candle-nn"
-version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
+version = "0.1.0"
 dependencies = [
- "candle-core 0.0.174",
+ "candle-core 0.1.0",
  "candle-metal-kernels",
  "half",
  "libc",
@@ -595,13 +591,11 @@ dependencies = [
 
 [[package]]
 name = "candle-vulkan-kernels"
-version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
+version = "0.1.0"
 
 [[package]]
 name = "candle-wgpu-kernels"
-version = "0.0.174"
-source = "git+https://github.com/FerrisMind/candle?branch=wgpu%2Fvulkan#b2522dd61912dd8cc887e418a6f5a27e6edebe8f"
+version = "0.1.0"
 
 [[package]]
 name = "cast"
@@ -962,9 +956,9 @@ dependencies = [
 
 [[package]]
 name = "cudarc"
-version = "0.19.9"
+version = "0.19.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "804764d10e844da09765a7b2ca9641a0851523d1702efb0d7299d73e31b86e80"
+checksum = "7359bf1de037ddada72729c3acec9b040f3468400c6e9e740b01ba0cd2e89562"
 dependencies = [
  "float8",
  "half",
@@ -2507,7 +2501,7 @@ name = "lux3d-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "candle-core 0.0.174",
+ "candle-core 0.1.0",
  "clap",
  "lux3d-core",
  "serde_json",
@@ -2518,7 +2512,7 @@ name = "lux3d-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "candle-core 0.0.174",
+ "candle-core 0.1.0",
  "candle-nn",
  "criterion",
  "dirs",
@@ -2563,7 +2557,7 @@ dependencies = [
  "async-stream",
  "axum",
  "base64 0.22.1",
- "candle-core 0.0.174",
+ "candle-core 0.1.0",
  "dirs",
  "futures",
  "lux3d-core",
