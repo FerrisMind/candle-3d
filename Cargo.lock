@@ -490,6 +490,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.1.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 dependencies = [
  "ash",
  "byteorder",
@@ -555,6 +556,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 dependencies = [
  "cudaforge",
 ]
@@ -562,6 +564,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 dependencies = [
  "block2",
  "half",
@@ -576,6 +579,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.1.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 dependencies = [
  "candle-core 0.1.0",
  "candle-metal-kernels",
@@ -592,10 +596,12 @@ dependencies = [
 [[package]]
 name = "candle-vulkan-kernels"
 version = "0.1.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 
 [[package]]
 name = "candle-wgpu-kernels"
 version = "0.1.0"
+source = "git+https://github.com/FerrisMind/candle?rev=addb4aaeaf9fa4ecd642cbfdde1a4863471c2254#addb4aaeaf9fa4ecd642cbfdde1a4863471c2254"
 
 [[package]]
 name = "cast"
