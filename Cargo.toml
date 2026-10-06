@@ -21,8 +21,8 @@ categories = ["command-line-utilities", "graphics", "science"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
-candle-core = { git = "https://github.com/FerrisMind/candle", rev = "addb4aaeaf9fa4ecd642cbfdde1a4863471c2254" }
-candle-nn = { git = "https://github.com/FerrisMind/candle", rev = "addb4aaeaf9fa4ecd642cbfdde1a4863471c2254" }
+candle-core = { git = "https://github.com/FerrisMind/candle", rev = "0e126a2533feb5018dec7d3e31c7dc77c21d6649" }
+candle-nn = { git = "https://github.com/FerrisMind/candle", rev = "0e126a2533feb5018dec7d3e31c7dc77c21d6649" }
 clap = { version = "4.5.54", features = ["derive", "wrap_help"] }
 dirs = "6.0.0"
 fs2 = "0.4.3"
