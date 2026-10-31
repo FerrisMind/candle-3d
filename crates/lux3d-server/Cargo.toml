@@ -15,6 +15,13 @@ categories = ["command-line-utilities", "web-programming::http-server"]
 name = "lux3d-server"
 path = "src/main.rs"
 
+[features]
+default = []
+cuda = ["lux3d-core/cuda", "lux3d-server-core/cuda"]
+metal = ["lux3d-core/metal", "lux3d-server-core/metal"]
+wgpu = ["lux3d-core/wgpu", "lux3d-server-core/wgpu"]
+vulkan = ["lux3d-core/vulkan", "lux3d-server-core/vulkan"]
+
 [dependencies]
 axum = { version = "0.8.8", features = ["tokio"] }
 anyhow.workspace = true

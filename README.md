@@ -96,21 +96,23 @@ cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-mod
 
 ### Run Inference
 
+GPU backends are Cargo features (`cuda` / `vulkan` / `wgpu` / `metal`). Default builds are CPU-only.
+
 ```powershell
 # Pi3 -> PLY with an explicit canonical package directory (layout matches 3d/canonical-weights/pi3)
-cargo run -p lux3d-cli -- run pi3 --model-path <canonical-pi3-dir> --source <input-sequence> --output <output-file.ply>
+cargo run -p lux3d-cli --features cuda -- run pi3 --model-path <canonical-pi3-dir> --source <input-sequence> --output <output-file.ply>
 
 # Pi3X core -> PLY with an explicit canonical package directory (layout matches 3d/canonical-weights/pi3x)
-cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <input-sequence> --conditions <conditions-file> --output <output-file.ply>
+cargo run -p lux3d-cli --features cuda -- run pi3x --model-path <canonical-pi3x-dir> --source <input-sequence> --conditions <conditions-file> --output <output-file.ply>
 
 # Pi3X VO -> PLY with an explicit canonical package directory (layout matches 3d/canonical-weights/pi3x)
-cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
+cargo run -p lux3d-cli --features cuda -- run pi3x --model-path <canonical-pi3x-dir> --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
 
 # TripoSR -> OBJ with an explicit canonical package directory (layout matches 3d/canonical-weights/triposr)
-cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+cargo run -p lux3d-cli --features cuda -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
 
 # Auto-download canonical packages from Hugging Face into the user cache
-cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
+cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
 > **Experimental backends (Vulkan / WGPU):** select a non-CUDA device with `--device`:
@@ -125,10 +127,13 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 ### Run the HTTP Server
 
 ```powershell
-cargo run -p lux3d-server -- --host 127.0.0.1 --port 8080
+cargo run -p lux3d-server --features cuda -- --host 127.0.0.1 --port 8080
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/v1/models
 ```
+
+Prebuilt releases (`.github/workflows/release.yml`): Windows + Ubuntu × cpu/cuda/vulkan.
+Names follow llama.cpp (`lux3d-<tag>-bin-…`); CUDA libs ship inside the archive (mistral.rs style).
 
 Generation endpoints accept `multipart/form-data` and return `202 Accepted` with an async job object:
 

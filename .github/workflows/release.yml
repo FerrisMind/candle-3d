@@ -1,0 +1,355 @@
+# Lux3D / candle-3d release binaries
+#
+# Packaging model: mistral.rs — CUDA runtime libs live *inside* the same
+# archive as the binaries (no separate cudart-*.zip).
+#
+# Asset naming: llama.cpp style with the version/tag embedded:
+#   lux3d-<tag>-bin-win-{cpu,cuda,vulkan}-x64.zip
+#   lux3d-<tag>-bin-ubuntu-x64-{cpu,cuda,vulkan}.tar.gz
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "b*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag embedded in asset names (e.g. v0.1.0 or b42). Empty → b<commit-count>."
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: "Publish / update a GitHub Release after builds succeed."
+        required: false
+        default: true
+        type: boolean
+      dry_run:
+        description: "Build the matrix but skip creating/updating the GitHub Release."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Broad enough for common consumer/datacenter GPUs; Candle embeds kernels for this SM.
+  CUDA_COMPUTE_CAP: "86"
+  CUDA_VERSION: "12.6.0"
+  VULKAN_SDK_VERSION: "1.3.296.0"
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.name }}
+      publish: ${{ steps.ctx.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve tag
+        id: tag
+        uses: ./.github/actions/get-tag-name
+        with:
+          version: ${{ inputs.version }}
+      - name: Resolve publish flag
+        id: ctx
+        shell: bash
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          publish=false
+          if [[ "$DRY_RUN" == "true" ]]; then
+            publish=false
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            publish=true
+          elif [[ "$PUBLISH_INPUT" == "true" ]]; then
+            publish=true
+          fi
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows x64 (${{ matrix.backend }})
+    needs: preflight
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cpu
+            features: ""
+          - backend: cuda
+            features: "cuda"
+          - backend: vulkan
+            features: "vulkan"
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: win-${{ matrix.backend }}
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "nvrtc", "nvrtc_dev", "visual_studio_integration"]'
+          use-github-cache: true
+
+      - name: Setup Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        shell: pwsh
+        env:
+          VULKAN_VERSION: ${{ env.VULKAN_SDK_VERSION }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:RUNNER_TEMP "VulkanSDK-Installer.exe"
+          curl.exe -L -o $installer "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          Start-Process -FilePath $installer -ArgumentList "--accept-licenses","--default-answer","--confirm-command","install" -Wait -NoNewWindow
+          $sdk = "C:\VulkanSDK\${env:VULKAN_VERSION}"
+          echo "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
+          echo "$sdk\Bin" >> $env:GITHUB_PATH
+
+      - name: Build
+        shell: pwsh
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:FEATURES) {
+            cargo build --locked --release `
+              -p lux3d-cli --features $env:FEATURES `
+              -p lux3d-server --features $env:FEATURES
+          } else {
+            cargo build --locked --release -p lux3d-cli -p lux3d-server
+          }
+
+      - name: Stage package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = Join-Path $env:RUNNER_TEMP "lux3d-$env:TAG"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item target\release\lux3d-cli.exe $root
+          Copy-Item target\release\lux3d-server.exe $root
+          Copy-Item LICENSE $root
+          Copy-Item README.md $root -ErrorAction SilentlyContinue
+
+          if ("${{ matrix.backend }}" -eq "cuda") {
+            $cudaBin = Join-Path $env:CUDA_PATH "bin"
+            $patterns = @(
+              "cudart64_*.dll",
+              "cublas64_*.dll",
+              "cublasLt64_*.dll",
+              "curand64_*.dll",
+              "nvrtc64_*.dll",
+              "nvrtc-builtins64_*.dll"
+            )
+            foreach ($pattern in $patterns) {
+              Get-ChildItem $cudaBin -Filter $pattern -ErrorAction SilentlyContinue |
+                Copy-Item -Destination $root -Force
+            }
+            if (-not (Get-ChildItem $root -Filter "cudart64_*.dll" -ErrorAction SilentlyContinue)) {
+              throw "CUDA runtime DLLs missing from $cudaBin (expected cudart64_*.dll)"
+            }
+          }
+
+          $asset = "lux3d-$env:TAG-bin-win-${{ matrix.backend }}-x64.zip"
+          if (Test-Path $asset) { Remove-Item $asset -Force }
+          Compress-Archive -Path (Join-Path $root "*") -DestinationPath $asset
+          echo "ASSET=$asset" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lux3d-${{ env.TAG }}-bin-win-${{ matrix.backend }}-x64
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  ubuntu:
+    name: Ubuntu x64 (${{ matrix.backend }})
+    needs: preflight
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cpu
+            features: ""
+          - backend: cuda
+            features: "cuda"
+          - backend: vulkan
+            features: "vulkan"
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux-${{ matrix.backend }}
+
+      - name: Install pack helpers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends patchelf zip
+
+      - name: Setup CUDA Toolkit
+        if: matrix.backend == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+          use-github-cache: true
+
+      - name: Setup Vulkan SDK
+        if: matrix.backend == 'vulkan'
+        env:
+          VULKAN_VERSION: ${{ env.VULKAN_SDK_VERSION }}
+        run: |
+          set -euo pipefail
+          wget -q "https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_VERSION}.tar.xz" -O /tmp/vulkan.tar.xz
+          mkdir -p "$HOME/vulkan"
+          tar -xJf /tmp/vulkan.tar.xz -C "$HOME/vulkan"
+          sdk="$HOME/vulkan/${VULKAN_VERSION}"
+          # shellcheck disable=SC1091
+          source "$sdk/setup-env.sh"
+          echo "VULKAN_SDK=$VULKAN_SDK" >> "$GITHUB_ENV"
+          echo "$VULKAN_SDK/bin" >> "$GITHUB_PATH"
+          echo "VK_LAYER_PATH=$VULKAN_SDK/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
+          sudo apt-get install -y --no-install-recommends libvulkan-dev glslc || true
+
+      - name: Build
+        env:
+          FEATURES: ${{ matrix.features }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$FEATURES" ]]; then
+            cargo build --locked --release \
+              -p lux3d-cli --features "$FEATURES" \
+              -p lux3d-server --features "$FEATURES"
+          else
+            cargo build --locked --release -p lux3d-cli -p lux3d-server
+          fi
+
+      - name: Stage package
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/lux3d-${TAG}"
+          mkdir -p "$root"
+          cp target/release/lux3d-cli target/release/lux3d-server "$root/"
+          cp LICENSE "$root/"
+          cp README.md "$root/" 2>/dev/null || true
+
+          if [[ "${{ matrix.backend }}" == "cuda" ]]; then
+            mkdir -p "$root/lib"
+            for bin in lux3d-cli lux3d-server; do
+              ldd "$root/$bin" | awk '/=> \//{print $3}' \
+                | grep -E 'libcud|libcublas|libcurand|libnvrtc|libnvJit|libnvjit' \
+                | sort -u \
+                | while read -r so; do
+                    cp -Lv "$so" "$root/lib/" || true
+                  done
+              patchelf --set-rpath '$ORIGIN/lib' "$root/$bin"
+            done
+            if ! compgen -G "$root/lib/libcudart.so*" > /dev/null; then
+              echo "CUDA runtime .so files missing after ldd bundle" >&2
+              ldd "$root/lux3d-cli" || true
+              exit 1
+            fi
+          fi
+
+          asset="lux3d-${TAG}-bin-ubuntu-x64-${{ matrix.backend }}.tar.gz"
+          tar -czvf "$asset" -C "$RUNNER_TEMP" "lux3d-${TAG}"
+          echo "ASSET=${asset}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lux3d-${{ env.TAG }}-bin-ubuntu-x64-${{ matrix.backend }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [preflight, windows, ubuntu]
+    if: ${{ needs.preflight.outputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.preflight.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure git tag exists
+        if: ${{ github.ref_type != 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists"
+          else
+            git tag "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print -exec mv -t release {} +
+          ls -la release
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*
+          body: |
+            Lux3D / candle-3d binaries (mistral.rs packaging: CUDA libs inside the archive).
+
+            **Windows x64**
+            - [CPU](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-win-cpu-x64.zip)
+            - [CUDA](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-win-cuda-x64.zip)
+            - [Vulkan](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-win-vulkan-x64.zip)
+
+            **Ubuntu x64**
+            - [CPU](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-ubuntu-x64-cpu.tar.gz)
+            - [CUDA](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-ubuntu-x64-cuda.tar.gz)
+            - [Vulkan](https://github.com/${{ github.repository }}/releases/download/${{ env.TAG }}/lux3d-${{ env.TAG }}-bin-ubuntu-x64-vulkan.tar.gz)

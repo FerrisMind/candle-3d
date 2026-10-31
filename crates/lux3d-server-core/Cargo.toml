@@ -11,6 +11,14 @@ repository.workspace = true
 keywords = ["3d", "generation", "candle", "axum", "server"]
 categories = ["web-programming::http-server", "science"]
 
+[features]
+default = ["swagger-ui"]
+swagger-ui = ["dep:utoipa-swagger-ui"]
+cuda = ["candle-core/cuda", "lux3d-core/cuda"]
+metal = ["candle-core/metal", "lux3d-core/metal"]
+wgpu = ["candle-core/wgpu", "lux3d-core/wgpu"]
+vulkan = ["candle-core/vulkan", "lux3d-core/vulkan"]
+
 [dependencies]
 dirs.workspace = true
 anyhow.workspace = true
@@ -35,17 +43,3 @@ utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum"], optional = true }
 uuid = { version = "1.19.0", features = ["v4"] }
 zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-candle-core = { workspace = true, features = ["metal"] }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-candle-core = { workspace = true, features = ["cuda"] }
-
-[features]
-default = ["swagger-ui"]
-swagger-ui = ["dep:utoipa-swagger-ui"]
-cuda = ["candle-core/cuda"]
-metal = ["candle-core/metal"]
-wgpu = ["candle-core/wgpu", "lux3d-core/wgpu"]
-vulkan = ["candle-core/vulkan", "lux3d-core/vulkan"]
