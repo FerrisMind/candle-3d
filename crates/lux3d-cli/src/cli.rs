@@ -161,29 +161,33 @@ fn describe_device(backend: DeviceBackend, device: &candle_core::Device) -> Stri
                 candle_core::DeviceLocation::Cuda { gpu_id } => gpu_id,
                 _ => 0,
             };
-            match device.as_cuda_device() {
-                Ok(cuda) => {
-                    let stream = cuda.cuda_stream();
-                    let ctx = stream.context();
-                    let name = ctx
-                        .name()
-                        .unwrap_or_else(|_| format!("cuda:{gpu_id}"));
-                    let cc = ctx
-                        .compute_capability()
-                        .map(|(maj, min)| format!("{maj}.{min}"))
-                        .unwrap_or_else(|_| "?".to_string());
-                    let mem = ctx
-                        .total_mem()
-                        .map(|bytes| {
-                            format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-                        })
-                        .unwrap_or_else(|_| "?".to_string());
-                    format!(
-                        "[device] backend=cuda gpu=\"{name}\" compute={cc} mem={mem} id={gpu_id}"
-                    )
+            #[cfg(feature = "cuda")]
+            {
+                match device.as_cuda_device() {
+                    Ok(cuda) => {
+                        let stream = cuda.cuda_stream();
+                        let ctx = stream.context();
+                        let name = ctx
+                            .name()
+                            .unwrap_or_else(|_| format!("cuda:{gpu_id}"));
+                        let cc = ctx
+                            .compute_capability()
+                            .map(|(maj, min)| format!("{maj}.{min}"))
+                            .unwrap_or_else(|_| "?".to_string());
+                        let mem = ctx
+                            .total_mem()
+                            .map(|bytes| {
+                                format!("{:.2} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+                            })
+                            .unwrap_or_else(|_| "?".to_string());
+                        return format!(
+                            "[device] backend=cuda gpu=\"{name}\" compute={cc} mem={mem} id={gpu_id}"
+                        );
+                    }
+                    Err(_) => {}
                 }
-                Err(_) => format!("[device] backend=cuda id={gpu_id}"),
             }
+            format!("[device] backend=cuda id={gpu_id}")
         }
         DeviceBackend::Wgpu => {
             let gpu_id = match loc {
