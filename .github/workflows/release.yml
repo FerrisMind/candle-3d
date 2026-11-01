@@ -246,7 +246,10 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
           cuda: ${{ env.CUDA_VERSION }}
-          method: network
+          # network pulls nvidia-dkms and fails on Azure kernels (no GPU).
+          # local .run with --toolkit installs nvcc/libs only.
+          method: local
+          linux-local-args: '["--toolkit"]'
           use-github-cache: true
 
       - name: Setup Vulkan SDK
