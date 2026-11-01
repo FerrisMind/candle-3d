@@ -257,7 +257,7 @@ jobs:
         env:
           VULKAN_VERSION: ${{ env.VULKAN_SDK_VERSION }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
           url="https://sdk.lunarg.com/sdk/download/${VULKAN_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_VERSION}.tar.xz"
           wget -q "$url" -O /tmp/vulkan.tar.xz
           size=$(stat -c%s /tmp/vulkan.tar.xz)
@@ -269,8 +269,11 @@ jobs:
           mkdir -p "$HOME/vulkan"
           tar -xJf /tmp/vulkan.tar.xz -C "$HOME/vulkan"
           sdk="$HOME/vulkan/${VULKAN_VERSION}"
+          # LunarG setup-env.sh references $1; set -u would abort on source.
           # shellcheck disable=SC1091
+          set +u
           source "$sdk/setup-env.sh"
+          set -u
           echo "VULKAN_SDK=$VULKAN_SDK" >> "$GITHUB_ENV"
           echo "$VULKAN_SDK/bin" >> "$GITHUB_PATH"
           echo "VK_LAYER_PATH=$VULKAN_SDK/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
@@ -300,6 +303,7 @@ jobs:
 
           if [[ "${{ matrix.backend }}" == "cuda" ]]; then
             mkdir -p "$root/lib"
+            cuda_lib="${CUDA_PATH:-/usr/local/cuda}/lib64"
             for bin in lux3d-cli lux3d-server; do
               ldd "$root/$bin" | awk '/=> \//{print $3}' \
                 | grep -E 'libcud|libcublas|libcurand|libnvrtc|libnvJit|libnvjit' \
@@ -309,9 +313,20 @@ jobs:
                   done
               patchelf --set-rpath '$ORIGIN/lib' "$root/$bin"
             done
-            if ! compgen -G "$root/lib/libcudart.so*" > /dev/null; then
-              echo "CUDA runtime .so files missing after ldd bundle" >&2
+            # Candle often links cublas/curand without a direct libcudart NEEDED;
+            # still ship cudart (+ siblings) from the toolkit for end-user machines.
+            if [[ -d "$cuda_lib" ]]; then
+              for pattern in libcudart.so* libcublas.so* libcublasLt.so* libcurand.so* libnvrtc.so* libnvJitLink.so* libnvrtc-builtins.so*; do
+                for f in "$cuda_lib"/$pattern; do
+                  [[ -e "$f" ]] || continue
+                  cp -Lv "$f" "$root/lib/" || true
+                done
+              done
+            fi
+            if ! compgen -G "$root/lib/libcu*.so*" > /dev/null; then
+              echo "CUDA runtime .so files missing after ldd/toolkit bundle" >&2
               ldd "$root/lux3d-cli" || true
+              ls -la "$cuda_lib" 2>/dev/null | head -n 50 || true
               exit 1
             fi
           fi
