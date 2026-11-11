@@ -23,6 +23,8 @@ mod point_camera_ops;
 mod resampling;
 mod triposr;
 mod triposr_field;
+mod vggt;
+mod vggt_dpt;
 mod vision_preproc;
 
 pub(crate) use pi3x::prepare_pi3x_inputs_with_stage;
@@ -32,6 +34,9 @@ pub use pi3x::{
 };
 pub(crate) use triposr::prepare_triposr_inputs_with_stage;
 pub use triposr::{TripoInferenceOutput, TripoMeshBuffers, TripoPreparedInputs, TripoSrPipeline};
+pub use vggt::{
+    VggtAggregatorOutput, VggtDebugTaps, VggtInferenceOutput, VggtPipeline, VggtPreparedInputs,
+};
 
 use crate::{
     CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
