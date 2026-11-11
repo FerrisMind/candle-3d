@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
+
+# Support `python -I` (isolated mode), which does not put the script directory
+# on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import torch
 from safetensors import safe_open
@@ -17,7 +22,7 @@ NORMALIZER_VERSION = 1
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Normalize LuxRT model weights into canonical safetensors.")
-    parser.add_argument("--family", choices=["pi3", "pi3x", "triposr"], required=True)
+    parser.add_argument("--family", choices=["pi3", "pi3x", "triposr", "vggt"], required=True)
     parser.add_argument("--repo-root", type=str, default=None)
     parser.add_argument("--raw-model-dir", type=str, required=True)
     parser.add_argument("--output-dir", type=str, required=True)
@@ -166,6 +171,24 @@ def normalize_triposr(raw_model_dir: Path, output_dir: Path) -> None:
         tensors=tensors,
     )
 
+def normalize_vggt(raw_model_dir: Path, output_dir: Path) -> None:
+    model_root = raw_model_dir
+    raw_weight = model_root / "model.safetensors"
+    raw_config = model_root / "config.json"
+
+    # The facebook/VGGT-1B checkpoint already uses the module hierarchy the
+    # runtime expects; keep the keys exactly as shipped.
+    tensors = load_file(str(raw_weight))
+    resolved_config = json.loads(raw_config.read_text(encoding="utf-8"))
+    write_outputs(
+        family="vggt",
+        output_dir=output_dir,
+        raw_files=[raw_weight, raw_config],
+        resolved_config=resolved_config,
+        tensors=tensors,
+    )
+
+
 def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     return Path(args.raw_model_dir).resolve(), Path(args.output_dir).resolve()
 
@@ -180,6 +203,8 @@ def main() -> None:
         normalize_pi3x(raw_model_dir, output_dir)
     elif args.family == "triposr":
         normalize_triposr(raw_model_dir, output_dir)
+    elif args.family == "vggt":
+        normalize_vggt(raw_model_dir, output_dir)
     else:
         raise RuntimeError(f"unsupported family: {args.family}")
 

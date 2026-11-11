@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use lux3d_core::test_support::runtime_root;
 use lux3d_core::{
     ExportSpec, FutureWeightLoader, GeometrySpec, ModelFamily, ModelSpec, NeuralSpec,
-    PreprocessSpec, RuntimeGeometry, SourceDisposition,
+    Pi3InputSource, PreprocessSpec, RgbRange, RuntimeGeometry, SourceDisposition, TensorDType,
 };
 
 fn assert_path_free_weight_plan(
@@ -216,8 +216,176 @@ fn triposr_model_spec_is_source_truth_backed() {
 }
 
 #[test]
+fn vggt_model_spec_is_source_truth_backed() {
+    let spec = ModelSpec::inspect(runtime_root(), ModelFamily::Vggt).expect("vggt model spec");
+
+    match &spec.preprocess {
+        PreprocessSpec::Vggt(preprocess) => {
+            assert_eq!(
+                vec![Pi3InputSource::Directory, Pi3InputSource::Video],
+                preprocess.accepted_sources
+            );
+            assert_eq!("NCHW", preprocess.input_layout);
+            assert_eq!(RgbRange::ZeroToOne, preprocess.input_range);
+            assert_eq!(14, preprocess.patch_multiple);
+            assert_eq!(518, preprocess.target_width);
+            assert_eq!(518, preprocess.max_image_size);
+            assert_eq!("crop", preprocess.resize_mode);
+            assert_eq!("bicubic", preprocess.resize_filter);
+            assert_eq!(1.0, preprocess.background_value);
+            assert!(preprocess.optional_rgba_compositing);
+            assert_eq!(
+                [0.485, 0.456, 0.406],
+                preprocess.internal_normalization.mean
+            );
+            assert_eq!([0.229, 0.224, 0.225], preprocess.internal_normalization.std);
+        }
+        other => panic!("expected Vggt preprocess spec, got {other:?}"),
+    }
+
+    match &spec.neural {
+        NeuralSpec::Vggt(neural) => {
+            assert_eq!("dinov2_vitl14_reg", neural.patch_embed_backbone);
+            assert_eq!(24, neural.aggregator_depth);
+            assert_eq!("frame_global_alternating", neural.attention_pattern);
+            assert_eq!(100.0, neural.rope_frequency);
+            assert!(neural.qk_norm);
+            assert_eq!(4, neural.register_tokens);
+            assert_eq!("absT_quaR_FoV", neural.pose_encoding);
+            assert_eq!(4, neural.camera_refine_iterations);
+            assert_eq!("dpt_inv_log_expp1", neural.point_head);
+            assert_eq!("dpt_exp_expp1", neural.depth_head);
+            assert!(neural.track_head.is_none());
+        }
+        other => panic!("expected Vggt neural spec, got {other:?}"),
+    }
+
+    match &spec.geometry {
+        GeometrySpec::Vggt(geometry) => {
+            assert_eq!("point_cloud", geometry.artifact_kind);
+            assert_eq!(
+                "world_points = point_head(aggregated_tokens)",
+                geometry.assembly_formula
+            );
+            assert!(!geometry.supports_marching_cubes);
+            assert!(geometry.supports_depth_unprojection);
+        }
+        other => panic!("expected Vggt geometry spec, got {other:?}"),
+    }
+
+    match &spec.export {
+        ExportSpec::Vggt(export) => {
+            assert_eq!("ply", export.primary_extension);
+            assert!(export.alternate_extensions.is_empty());
+            for expected_note in [
+                "world_points_conf > 1.0",
+                "colors from preprocessed RGB frames",
+                "write_ply(points, rgb)",
+            ] {
+                assert!(
+                    export
+                        .utility_notes
+                        .iter()
+                        .any(|note| note == expected_note),
+                    "missing export utility note `{expected_note}`"
+                );
+            }
+        }
+        other => panic!("expected Vggt export spec, got {other:?}"),
+    }
+
+    let RuntimeGeometry::Vggt(runtime) = &spec.runtime_geometry else {
+        panic!("expected vggt runtime geometry");
+    };
+    assert_eq!(5, runtime.outputs.len());
+    for (name, dims) in [
+        ("vggt.world_points", ["1", "S", "H", "W", "3"].as_slice()),
+        ("vggt.world_points_conf", ["1", "S", "H", "W"].as_slice()),
+        ("vggt.depth", ["1", "S", "H", "W", "1"].as_slice()),
+        ("vggt.camera.extrinsics", ["1", "S", "3", "4"].as_slice()),
+        ("vggt.camera.intrinsics", ["1", "S", "3", "3"].as_slice()),
+    ] {
+        let output = runtime
+            .outputs
+            .iter()
+            .find(|output| output.name == name)
+            .unwrap_or_else(|| panic!("missing vggt runtime output `{name}`"));
+        assert_eq!(
+            dims,
+            output.dims.iter().map(String::as_str).collect::<Vec<_>>(),
+            "unexpected dims for `{name}`"
+        );
+        assert_eq!(
+            TensorDType::F32,
+            output.runtime_dtype,
+            "unexpected runtime dtype for `{name}`"
+        );
+    }
+
+    let pose = spec
+        .runtime_tensors
+        .iter()
+        .find(|tensor| tensor.name == "vggt.camera.pose_enc")
+        .expect("vggt contract must expose `vggt.camera.pose_enc`");
+    assert_eq!(
+        vec!["1", "S", "9"],
+        pose.dims.iter().map(String::as_str).collect::<Vec<_>>()
+    );
+    assert_eq!(TensorDType::F32, pose.runtime_dtype);
+
+    let export_mask = spec
+        .runtime_tensors
+        .iter()
+        .find(|tensor| tensor.name == "vggt.export_mask")
+        .expect("vggt contract must expose `vggt.export_mask`");
+    assert_eq!(
+        vec!["1", "S", "H", "W"],
+        export_mask
+            .dims
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        TensorDType::U8,
+        export_mask.runtime_dtype,
+        "vggt export mask is materialized as U8"
+    );
+
+    assert_eq!(
+        FutureWeightLoader::CandleMmapSafetensors,
+        spec.weight_plan.future_loader
+    );
+    assert_path_free_weight_plan(
+        &spec,
+        ModelFamily::Vggt,
+        &["model.safetensors", "config.json"],
+    );
+    assert_eq!("pi3-frames-golden", spec.golden_baseline_sample);
+    for excluded in ["vggt_track_head", "vggt_commercial_checkpoint"] {
+        assert!(
+            spec.exclusions.iter().any(|entry| entry.item == excluded),
+            "missing contract exclusion `{excluded}`"
+        );
+    }
+    assert_eq!("CC-BY-NC-4.0", spec.license_policy.repo_license);
+    assert!(spec.license_policy.weight_license.contains("CC-BY-NC-4.0"));
+    for source_path in spec.used_source_paths().iter() {
+        assert!(
+            spec.license_policy.covers_source(source_path),
+            "missing license classification for {source_path}"
+        );
+    }
+}
+
+#[test]
 fn license_policy_covers_every_used_source_file() {
-    for family in [ModelFamily::Pi3, ModelFamily::Pi3x, ModelFamily::TripoSr] {
+    for family in [
+        ModelFamily::Pi3,
+        ModelFamily::Pi3x,
+        ModelFamily::TripoSr,
+        ModelFamily::Vggt,
+    ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
         for source_path in spec.used_source_paths().iter() {
@@ -231,7 +399,12 @@ fn license_policy_covers_every_used_source_file() {
 
 #[test]
 fn vendor_sources_have_fingerprints_and_license_entries() {
-    for family in [ModelFamily::Pi3, ModelFamily::Pi3x, ModelFamily::TripoSr] {
+    for family in [
+        ModelFamily::Pi3,
+        ModelFamily::Pi3x,
+        ModelFamily::TripoSr,
+        ModelFamily::Vggt,
+    ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
         for vendor in &spec.vendor_sources {
