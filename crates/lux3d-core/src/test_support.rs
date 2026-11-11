@@ -93,6 +93,7 @@ pub fn raw_model_dir_env_var(family: ModelFamily) -> &'static str {
         ModelFamily::Pi3 => "LUX3D_PI3_RAW_MODEL_DIR",
         ModelFamily::Pi3x => "LUX3D_PI3X_RAW_MODEL_DIR",
         ModelFamily::TripoSr => "LUX3D_TRIPOSR_RAW_MODEL_DIR",
+        ModelFamily::Vggt => "LUX3D_VGGT_RAW_MODEL_DIR",
     }
 }
 
@@ -203,6 +204,7 @@ fn official_raw_model_repo_id(family: ModelFamily) -> &'static str {
         ModelFamily::Pi3 => "yyfz233/Pi3",
         ModelFamily::Pi3x => "yyfz233/Pi3X",
         ModelFamily::TripoSr => "stabilityai/TripoSR",
+        ModelFamily::Vggt => "facebook/VGGT-1B",
     }
 }
 
@@ -211,5 +213,6 @@ fn raw_model_required_files(family: ModelFamily) -> &'static [&'static str] {
         ModelFamily::Pi3 => &["model.safetensors", "config.json"],
         ModelFamily::Pi3x => &["model.safetensors", "config.json"],
         ModelFamily::TripoSr => &["model.ckpt", "config.yaml"],
+        ModelFamily::Vggt => &["model.safetensors", "config.json"],
     }
 }

@@ -144,6 +144,7 @@ impl WeightLocator {
             ModelFamily::Pi3 => self.locate_pi3(),
             ModelFamily::Pi3x => self.locate_pi3x(),
             ModelFamily::TripoSr => self.locate_triposr(),
+            ModelFamily::Vggt => self.locate_vggt(),
         }
     }
 
@@ -190,6 +191,21 @@ impl WeightLocator {
             license_note:
                 "TripoSR code and weights are MIT; canonical safetensors stay outside vendor tree."
                     .to_string(),
+        })
+    }
+
+    fn locate_vggt(&self) -> Result<CanonicalizationPlan> {
+        let raw = self.ensure_exists(self.raw_model_dir.join(CANONICAL_FILENAME))?;
+        let config = self.ensure_exists(self.raw_model_dir.join("config.json"))?;
+        Ok(CanonicalizationPlan {
+            family: ModelFamily::Vggt,
+            raw_format: RawWeightFormat::SafetensorsDirect,
+            raw_files: vec![raw, config].into_boxed_slice(),
+            canonical_root: self.canonical_root.clone(),
+            canonical_filename: CANONICAL_FILENAME.to_string(),
+            future_loader: FutureWeightLoader::CandleMmapSafetensors,
+            license_note: "VGGT code and original weights are CC-BY-NC-4.0 (non-commercial); the commercial checkpoint is distributed separately."
+                .to_string(),
         })
     }
 

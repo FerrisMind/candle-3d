@@ -50,6 +50,8 @@ pub enum TensorDType {
     Bf16,
     Bool,
     I64,
+    #[serde(rename = "uint8")]
+    U8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -148,6 +148,23 @@ pub struct TripoPreprocessSpec {
     pub source_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VggtPreprocessSpec {
+    pub accepted_sources: Vec<Pi3InputSource>,
+    pub input_layout: String,
+    pub input_range: RgbRange,
+    pub patch_multiple: u32,
+    pub target_width: u32,
+    pub max_image_size: u32,
+    pub resize_mode: String,
+    pub resize_filter: String,
+    pub background_value: f32,
+    pub optional_rgba_compositing: bool,
+    pub internal_normalization: NormalizationStats,
+    pub source_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pi3NeuralSpec {
@@ -201,6 +218,23 @@ pub struct TripoNeuralSpec {
     pub source_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VggtNeuralSpec {
+    pub patch_embed_backbone: String,
+    pub aggregator_depth: usize,
+    pub attention_pattern: String,
+    pub rope_frequency: f32,
+    pub qk_norm: bool,
+    pub register_tokens: usize,
+    pub pose_encoding: String,
+    pub camera_refine_iterations: usize,
+    pub point_head: String,
+    pub depth_head: String,
+    pub track_head: Option<String>,
+    pub source_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pi3GeometrySpec {
@@ -236,6 +270,16 @@ pub struct TripoGeometrySpec {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct VggtGeometrySpec {
+    pub artifact_kind: String,
+    pub assembly_formula: String,
+    pub supports_marching_cubes: bool,
+    pub supports_depth_unprojection: bool,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pi3ExportSpec {
     pub primary_extension: String,
     pub alternate_extensions: Vec<String>,
@@ -261,6 +305,15 @@ pub struct TripoExportSpec {
     pub source_paths: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VggtExportSpec {
+    pub primary_extension: String,
+    pub alternate_extensions: Vec<String>,
+    pub utility_notes: Vec<String>,
+    pub source_paths: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "family",
@@ -273,6 +326,7 @@ pub enum PreprocessSpec {
     Pi3x(Pi3xPreprocessSpec),
     #[serde(rename = "triposr")]
     TripoSr(TripoPreprocessSpec),
+    Vggt(VggtPreprocessSpec),
 }
 
 impl PreprocessSpec {
@@ -281,6 +335,7 @@ impl PreprocessSpec {
             Self::Pi3(spec) => &spec.source_paths,
             Self::Pi3x(spec) => &spec.source_paths,
             Self::TripoSr(spec) => &spec.source_paths,
+            Self::Vggt(spec) => &spec.source_paths,
         }
     }
 }
@@ -297,6 +352,7 @@ pub enum NeuralSpec {
     Pi3x(Pi3xNeuralSpec),
     #[serde(rename = "triposr")]
     TripoSr(TripoNeuralSpec),
+    Vggt(VggtNeuralSpec),
 }
 
 impl NeuralSpec {
@@ -305,6 +361,7 @@ impl NeuralSpec {
             Self::Pi3(spec) => &spec.source_paths,
             Self::Pi3x(spec) => &spec.source_paths,
             Self::TripoSr(spec) => &spec.source_paths,
+            Self::Vggt(spec) => &spec.source_paths,
         }
     }
 }
@@ -321,6 +378,7 @@ pub enum GeometrySpec {
     Pi3x(Pi3xGeometrySpec),
     #[serde(rename = "triposr")]
     TripoSr(TripoGeometrySpec),
+    Vggt(VggtGeometrySpec),
 }
 
 impl GeometrySpec {
@@ -329,6 +387,7 @@ impl GeometrySpec {
             Self::Pi3(spec) => &spec.source_paths,
             Self::Pi3x(spec) => &spec.source_paths,
             Self::TripoSr(spec) => &spec.source_paths,
+            Self::Vggt(spec) => &spec.source_paths,
         }
     }
 }
@@ -345,6 +404,7 @@ pub enum ExportSpec {
     Pi3x(Pi3xExportSpec),
     #[serde(rename = "triposr")]
     TripoSr(TripoExportSpec),
+    Vggt(VggtExportSpec),
 }
 
 impl ExportSpec {
@@ -353,6 +413,7 @@ impl ExportSpec {
             Self::Pi3(spec) => &spec.source_paths,
             Self::Pi3x(spec) => &spec.source_paths,
             Self::TripoSr(spec) => &spec.source_paths,
+            Self::Vggt(spec) => &spec.source_paths,
         }
     }
 }
@@ -396,6 +457,18 @@ pub struct TripoRuntimeGeometry {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VggtRuntimeGeometry {
+    pub artifact_kind: String,
+    pub assembly_formula: String,
+    pub outputs: Vec<GeometryBufferContract>,
+    pub supports_marching_cubes: bool,
+    pub supports_depth_unprojection: bool,
+    pub source_paths: Vec<String>,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "family",
@@ -408,6 +481,7 @@ pub enum RuntimeGeometry {
     Pi3x(Pi3xRuntimeGeometry),
     #[serde(rename = "triposr")]
     TripoSr(TripoRuntimeGeometry),
+    Vggt(VggtRuntimeGeometry),
 }
 
 impl RuntimeGeometry {
@@ -416,6 +490,7 @@ impl RuntimeGeometry {
             Self::Pi3(spec) => &spec.source_paths,
             Self::Pi3x(spec) => &spec.source_paths,
             Self::TripoSr(spec) => &spec.source_paths,
+            Self::Vggt(spec) => &spec.source_paths,
         }
     }
 }

@@ -6,6 +6,7 @@ mod pi3x;
 mod spec;
 mod stages;
 mod triposr;
+mod vggt;
 
 pub use baseline::{
     BaselineGeometrySummary, BaselineManifest, BaselinePreviewArtifact, BaselineSampleKind,
@@ -24,6 +25,8 @@ pub use spec::{
     Pi3NeuralSpec, Pi3PreprocessSpec, Pi3xExportSpec, Pi3xGeometrySpec, Pi3xNeuralSpec,
     Pi3xPreprocessSpec, PreprocessSpec, RuntimeGeometry, RuntimeTensorContract, SourceDisposition,
     TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, VendorSource,
+    VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec, VggtPreprocessSpec, VggtRuntimeGeometry,
 };
 pub use stages::{ExportStage, GeometryStage, NeuralStage, PreprocessStage};
 pub use triposr::{TripoMesh, TripoPreparedImage, TripoRawInput, TripoSceneCode};
+pub use vggt::{VggtPointCloud, VggtPreparedBatch, VggtRawInput, VggtSceneCode};

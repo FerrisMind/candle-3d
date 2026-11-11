@@ -17,6 +17,8 @@ pub use contracts::{
     Pi3xNeuralSpec, Pi3xPreprocessSpec, PreprocessSpec, RgbRange, RuntimeArchitecture,
     RuntimeGeometry, RuntimeTensorContract, SourceDisposition, SpatialSize, TensorDType,
     TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, VendorSource,
+    VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec, VggtPointCloud, VggtPreparedBatch,
+    VggtPreprocessSpec, VggtRawInput, VggtRuntimeGeometry, VggtSceneCode,
 };
 pub use error::{Lux3dError, Result};
 pub use weights::{
@@ -43,4 +45,3 @@ pub fn enable_reduced_precision_gemm_opt_ins() {
         }
     }
 }
-
