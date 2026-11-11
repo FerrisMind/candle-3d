@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>Rust workspace для clean-room 3D-инференса, инспекции контрактов и каноникализации весов.</b><br>
-  CUDA-first runtime для Pi3, Pi3X и TripoSR.
+  CUDA-first runtime для Pi3, Pi3X, TripoSR и VGGT.
 </p>
 
 <p align="center">
@@ -44,12 +44,14 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 - `pi3`
 - `pi3x`
 - `triposr`
+- `vggt` — VGGT-1B: multi-view point cloud, depth и camera. Оригинальные веса CC-BY-NC-4.0
+  (non-commercial); коммерческий checkpoint распространяется отдельно.
 
 ## Ключевые возможности
 
 - `lux3d-core` реализует контракты, загрузку runtime, экспорт и проверку весов.
 - `lux3d-cli` предоставляет команды `inspect`, `weights normalize` и `run`.
-- `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X и TripoSR.
+- `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X, TripoSR и VGGT.
 - Python baseline tooling описан в [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Лицензирование по каждому семейству моделей можно проверить через CLI перед распространением артефактов.
 - **Экспериментально:** инференс на Vulkan и WGPU через `--device vulkan` / `--device wgpu` (сборка с `--features vulkan` / `--features wgpu`). Не готово для продакшена — может работать нестабильно, давать неверный результат или не запускаться в зависимости от железа и драйверов. Единственный проверенный бэкенд — CUDA.
@@ -84,6 +86,7 @@ cargo run -p lux3d-cli -- --help
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3x
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
+cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> vggt
 ```
 
 ### Нормализация Canonical Weights
@@ -92,6 +95,7 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --output-dir <canonical-pi3-dir> pi3
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --output-dir <canonical-pi3x-dir> pi3x
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 ```
 
 ### Запуск Инференса
@@ -108,6 +112,12 @@ cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <i
 
 # TripoSR -> OBJ с явной директорией canonical package в layout как 3d/canonical-weights/triposr
 cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+
+# VGGT -> PLY (world points фильтруются по confidence > 1.0 по умолчанию)
+cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <input-sequence> --output <output-file.ply>
+
+# Автоскачивание canonical package VGGT (oxide-lab/VGGT-1B)
+cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
 # Автоскачивание canonical packages из Hugging Face в пользовательский cache
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
@@ -131,6 +141,11 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 | pi3 (5 кадров, 518×518) | **4.82 с** | 7.83 с | 13.96 с | 1.62× | 2.90× |
 | pi3x (6 кадров, 518×518) | **7.00 с** | 11.10 с | 31.84 с | 1.59× | 4.55× |
 | triposr (одно изображение) | **1.23 с** | 3.36 с | 4.89 с | 2.73× | 3.98× |
+
+VGGT-1B добавлен позже и измерен отдельно (форк rev `f94d26eb`, 2026-11-11): 3 кадра 518×518,
+camera + DPT depth + DPT point heads. RTX 3060 12 GiB: CUDA **6.95 с**, Vulkan 15.54 с (2.24×),
+CPU 107.66 с. Пик CUDA VRAM 9.4 GiB на 3 кадрах; на NVIDIA L4 23 GiB — 7.98 GiB на 3 кадрах
+(4.19 с infer) и 8.30 GiB на 12 кадрах (26.21 с infer).
 
 Тёплый criterion (10 сэмплов, установившийся режим — протокол candle-bench, одно сквозное окно измерений): vulkan 3.14 с / 4.90 с на итерацию (1.16×/1.20× от CUDA 2.72 с / 4.09 с), wgpu 8.21 с / 24.0 с (3.0×/5.9×). Самый крупный одиночный рычаг — слитый кернел LayerNorm+RoPE (`rope_layernorm.comp`/`.wgsl` в форке): один диспатч на q/k вместо медленного пути LayerNorm, обе окружающие копии и цепочка rope из 8 опов на каждом rope-вызове — wgpu pi3 в тёплом цикле 54.9 с → 8.21 с.
 
@@ -159,3 +174,5 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 Код и документация этого репозитория лицензированы по Apache 2.0. См. [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Upstream-модельные артефакты и canonical weights сохраняют свои исходные лицензии и ограничения на использование. Перед распространением проверяй условия для конкретного семейства модели.
+
+**VGGT-1B:** оригинальный код и checkpoint `facebook/VGGT-1B` — CC-BY-NC-4.0 (non-commercial). Для коммерческого использования нужен отдельно распространяемый `facebook/VGGT-1B-Commercial`. Canonical package для `--model-path`/автоскачивания публикуется как `oxide-lab/VGGT-1B`; сырой upstream checkpoint остаётся в `facebook/VGGT-1B`. Нативный track head в этом inference slice намеренно не реализован; исключение зафиксировано в контракте.

@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>Rust workspace for clean-room 3D inference, contract inspection, and weight canonicalization.</b><br>
-  CUDA-first runtime for Pi3, Pi3X, and TripoSR.
+  CUDA-first runtime for Pi3, Pi3X, TripoSR, and VGGT.
 </p>
 
 <p align="center">
@@ -44,15 +44,17 @@ Supported model families:
 - `pi3`
 - `pi3x`
 - `triposr`
+- `vggt` — VGGT-1B multi-view point/depth/camera inference. Original weights are
+  CC-BY-NC-4.0 (non-commercial); the commercial checkpoint is distributed separately.
 
 ## Key Features
 
 - `lux3d-core` implements contracts, runtime loading, export logic, and weight validation.
 - `lux3d-cli` exposes `inspect`, `weights normalize`, and `run`.
-- `lux3d-server-core` exposes an OpenAI-style async HTTP API for Pi3, Pi3X, and TripoSR generation.
+- `lux3d-server-core` exposes an OpenAI-style async HTTP API for Pi3, Pi3X, TripoSR, and VGGT generation.
 - Python baseline tooling lives in [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Model-family-specific licensing can be inspected through the CLI before redistribution.
-- **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). Not production-ready — may be unstable, produce wrong results, or not work at all depending on hardware and drivers. CUDA is the only verified backend.
+- **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). CUDA is the primary backend; the Pi3/Pi3X/TripoSR and VGGT paths have Vulkan correctness checks (see [Performance](#performance)). WGPU remains experimental — may be unstable, produce wrong results, or not work at all depending on hardware and drivers.
 
 ## Demo
 
@@ -84,6 +86,7 @@ cargo run -p lux3d-cli -- --help
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3x
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
+cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> vggt
 ```
 
 ### Normalize Canonical Weights
@@ -92,6 +95,7 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --output-dir <canonical-pi3-dir> pi3
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --output-dir <canonical-pi3x-dir> pi3x
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 ```
 
 ### Run Inference
@@ -110,6 +114,12 @@ cargo run -p lux3d-cli --features cuda -- run pi3x --model-path <canonical-pi3x-
 
 # TripoSR -> OBJ with an explicit canonical package directory (layout matches 3d/canonical-weights/triposr)
 cargo run -p lux3d-cli --features cuda -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+
+# VGGT -> PLY (world points filtered by confidence > 1.0 by default)
+cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <input-sequence> --output <output-file.ply>
+
+# VGGT canonical package auto-download (oxide-lab/VGGT-1B)
+cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
 # Auto-download canonical packages from Hugging Face into the user cache
 cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --output <output-file.ply>
@@ -139,12 +149,12 @@ Generation endpoints accept `multipart/form-data` and return `202 Accepted` with
 
 | Endpoint | Models | Output |
 |----------|--------|--------|
-| `POST /v1/point-clouds/generations` | `pi3`, `pi3x` | PLY |
+| `POST /v1/point-clouds/generations` | `pi3`, `pi3x`, `vggt` | PLY |
 | `POST /v1/meshes/generations` | `triposr` | OBJ |
 
 Common fields:
 
-- `model` — required for point clouds (`pi3` or `pi3x`), optional for meshes (`triposr` default)
+- `model` — required for point clouds (`pi3`, `pi3x`, or `vggt`), optional for meshes (`triposr` default)
 - `source` — required upload (`.zip` frame archive, `.mp4` video, or image)
 - `conditions` — optional Pi3X conditions file
 - `options` — optional JSON string with family-specific parameters
@@ -191,13 +201,18 @@ Measured inference time (`[stage] infer`: preprocessing + neural pass, single it
 | pi3x (6 frames, 518×518) | **7.00 s** | 11.10 s | 31.84 s | 1.59× | 4.55× |
 | triposr (single image) | **1.23 s** | 3.36 s | 4.89 s | 2.73× | 3.98× |
 
+VGGT-1B was added later and is measured separately (fork rev `f94d26eb`, 2026-11-11): 3 frames at
+518×518, including camera, DPT depth, and DPT point heads. RTX 3060 12 GiB: CUDA **6.95 s**,
+Vulkan 15.54 s (2.24×), CPU 107.66 s. The CUDA peak is 9.4 GiB at 3 frames; on an NVIDIA L4 23 GiB
+the peak is 7.98 GiB at 3 frames (4.19 s infer) and 8.30 GiB at 12 frames (26.21 s infer).
+
 Warm-loop criterion (10 samples, steady state — the candle-bench protocol, one back-to-back window): vulkan 3.14 s / 4.90 s per iter (1.16×/1.20× of CUDA 2.72 s / 4.09 s), wgpu 8.21 s / 24.0 s (3.0×/5.9×). The biggest single lever was a fused LayerNorm+RoPE kernel (`rope_layernorm.comp`/`.wgsl` in the fork): one dispatch per q/k replaces the slow-path LayerNorm, both surrounding copies, and the 8-op rope chain at every rope site, cutting wgpu pi3 from 54.9 s to 8.21 s warm.
 
 Correctness: outputs of every backend × model combination were verified against the CUDA reference meshes (bounding box / center / mean delta within 1% of max extent, vertex/face counts within 0.5% — all PASS); the fused kernel is additionally unit-tested exact to 0.0 diff against the composed form on both backends.
 
 Memory behavior under repeated inference (10-iteration loop, same process):
 
-- **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×.
+- **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×. VGGT peaks at 9.4 GiB for 3 frames on the 12 GiB card, with DPT frames processed one at a time (`LUX3D_VGGT_DPT_CHUNK`, default 1).
 - **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
 - **WGPU** — 10-iteration pi3x benchmark completes with a 10.4 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
 
@@ -218,3 +233,5 @@ Known gaps: the remaining Vulkan/CUDA warm gap (1.16–1.20×) is the structural
 The code and documentation in this repository are licensed under Apache 2.0. See [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Upstream model assets and canonicalized model artifacts keep their original licenses and usage restrictions. Review model-family-specific terms before redistribution.
+
+**VGGT-1B:** the original code and `facebook/VGGT-1B` checkpoint are CC-BY-NC-4.0 (non-commercial). Commercial use requires the separately distributed `facebook/VGGT-1B-Commercial` checkpoint. The canonical package used by `--model-path`/auto-download is published as `oxide-lab/VGGT-1B`; the raw upstream checkpoint stays at `facebook/VGGT-1B`. The native track head is intentionally not implemented in this inference slice; the contract records that exclusion.

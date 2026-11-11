@@ -495,6 +495,52 @@ The library defines typed errors for all failure modes.
 
 ---
 
+## 13. VGGT Pipeline
+
+### US-13.1: VGGT-1B loads from canonical weights
+As the model, VGGT loads the DINOv2 patch backbone, 24 frame + 24 global aggregator blocks,
+the camera head, and the DPT point/depth heads from the canonical package.
+
+**Functions:**
+- `runtime/vggt.rs:VggtPipeline::load()` ✅
+- `runtime/vggt.rs:VggtAggregator::load()` — DINOv2 ViT-L/14 + camera/register tokens ✅
+- `runtime/vggt.rs:VggtCameraHead::load()` — 4 adaLN refinement iterations ✅
+- `runtime/vggt_dpt.rs:VggtDptHead::load()` — point (inv_log) and depth (exp) DPT heads ✅
+- `weights/mod.rs` — `vggt` family normalization/validation ✅
+
+### US-13.2: VGGT preprocess matches the reference loader
+As a user, I get the same crop/resize/pad/normalization as
+`vggt.utils.load_fn.load_and_preprocess_images(mode="crop")`.
+
+**Functions:**
+- `preprocess/vggt.rs:VggtPreprocessStage::prepare_inputs_from_path()` ✅
+- `preprocess/vggt.rs:VggtPreprocessStage::target_size_for()` ✅
+- Pillow-compatible integer BICUBIC resampler (0.0 delta vs baseline) ✅
+
+### US-13.3: VGGT inference and export
+As a user, I can run multi-frame inference and export a confidence-filtered PLY.
+
+**Functions:**
+- `runtime/vggt.rs:VggtPipeline::infer_from_path()` / `infer_tensors()` ✅
+- `runtime/vggt.rs:VggtPipeline::run_aggregator()` ✅
+- `runtime/vggt.rs:decode_pose()` — quaternion XYZW to extrinsics/intrinsics ✅
+- `geometry/vggt.rs:VggtGeometryStage::assemble_cpu()` — strict `conf > threshold` ✅
+- `export/vggt.rs:VggtExportStage::write_ply()` ✅
+- `runtime/vggt.rs:VggtPipeline::export_ply_with_threshold()` ✅
+- CLI `run vggt`; server `vggt` point-cloud jobs ✅
+
+**Tests:** `runtime_vggt` (CUDA parity vs Python baseline; requires a CUDA device),
+`vggt_preprocess` (CPU golden RGB + normalized parity), `vggt_export` (CPU),
+DPT separable-pos-embed/cache unit tests, and `model_spec`/`contracts` VGGT cases ✅
+
+CPU and Vulkan numeric parity was verified manually (PLY vertex count and bbox against the
+Python baseline; see `.swarm/results/backends-and-bench.md`). The automated parity test is
+CUDA-only; Metal has no test host in this repository.
+
+**Excluded:** native track head (`vggt_track_head`) — recorded in the contract; weights are never loaded.
+
+---
+
 ## Summary Statistics
 
 | Category | Functions | Test Coverage |
@@ -503,6 +549,7 @@ The library defines typed errors for all failure modes.
 | Pi3 Pipeline | 28 | Minimal |
 | Pi3X Pipeline | 24 | Minimal |
 | TripoSR Pipeline | 22 | Minimal |
+| VGGT Pipeline | 18 | CUDA parity |
 | Attention Math | 10 | None |
 | Resampling | 4 | None |
 | Camera Ops | 4 | None |

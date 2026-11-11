@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>Workspace Rust para inferência 3D clean-room, inspeção de contratos e canonicalização de pesos.</b><br>
-  Runtime CUDA-first para Pi3, Pi3X e TripoSR.
+  Runtime CUDA-first para Pi3, Pi3X, TripoSR e VGGT.
 </p>
 
 <p align="center">
@@ -43,6 +43,8 @@ Famílias de modelos suportadas:
 - `pi3`
 - `pi3x`
 - `triposr`
+- `vggt` — VGGT-1B: point cloud, depth e câmera multi-view. Pesos originais CC-BY-NC-4.0
+  (não comercial); o checkpoint comercial é distribuído separadamente.
 
 ## Principais Recursos
 
@@ -80,6 +82,7 @@ cargo run -p lux3d-cli -- --help
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3x
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
+cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> vggt
 ```
 
 ### Normalizar Pesos Canônicos
@@ -88,6 +91,7 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3-dir> --output-dir <canonical-pi3-dir> pi3
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --output-dir <canonical-pi3x-dir> pi3x
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 ```
 
 ### Executar Inferência
@@ -104,6 +108,12 @@ cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <i
 
 # TripoSR -> OBJ com diretório de canonical package explícito no layout de 3d/canonical-weights/triposr
 cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+
+# VGGT -> PLY (world points filtrados por confidence > 1.0 por padrão)
+cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <input-sequence> --output <output-file.ply>
+
+# Download automático do canonical package VGGT (oxide-lab/VGGT-1B)
+cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
 # Download automático de canonical packages do Hugging Face para o cache do usuário
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
@@ -133,3 +143,5 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 O código e a documentação deste repositório estão sob Apache 2.0. Veja [LICENSE](https://github.com/oxide-lab/Lux3d/blob/main/LICENSE).
 
 Os artefatos de modelo upstream e os canonical weights mantêm suas licenças e restrições originais de uso. Antes de redistribuir, verifique os termos da família de modelo correspondente.
+
+**VGGT-1B:** o código original e o checkpoint `facebook/VGGT-1B` são CC-BY-NC-4.0 (não comercial). O uso comercial exige o checkpoint `facebook/VGGT-1B-Commercial`, distribuído separadamente. O canonical package usado por `--model-path`/download automático é publicado como `oxide-lab/VGGT-1B`; o checkpoint upstream bruto permanece em `facebook/VGGT-1B`. O track head nativo não é implementado nesta fatia de inferência; o contrato registra essa exclusão.
