@@ -16,8 +16,7 @@ use crate::{
     api_types::{
         ErrorBody, ErrorResponse, GenerationListResponse, GenerationObject, GenerationStatus,
         MeshGenerationOptions, MeshGenerationRequest, ModelListResponse, ModelObject,
-        PointCloudGenerationOptions, PointCloudGenerationRequest, RouteSummary,
-        ServerInfoResponse,
+        PointCloudGenerationOptions, PointCloudGenerationRequest, RouteSummary, ServerInfoResponse,
     },
     errors::{conflict, internal_error, invalid_request, not_found},
     jobs::{
@@ -84,6 +83,7 @@ pub async fn models(State(state): ExtractedLux3dState) -> Json<ModelListResponse
         data: vec![
             model_entry(&state, "pi3", "point_cloud", "ply"),
             model_entry(&state, "pi3x", "point_cloud", "ply"),
+            model_entry(&state, "vggt", "point_cloud", "ply"),
             model_entry(&state, "triposr", "mesh", "obj"),
         ],
     })
@@ -169,11 +169,7 @@ pub async fn get_generation_content(
         return conflict(format!("generation `{id}` has no output artifact"));
     };
 
-    file_response(
-        output_path,
-        &record.content_type,
-        &record.download_filename,
-    )
+    file_response(output_path, &record.content_type, &record.download_filename)
 }
 
 #[utoipa::path(
@@ -204,11 +200,7 @@ pub async fn cancel_generation(
         ));
     }
 
-    if !state
-        .jobs
-        .request_cancel(&id)
-        .unwrap_or(false)
-    {
+    if !state.jobs.request_cancel(&id).unwrap_or(false) {
         return conflict(format!("generation `{id}` cannot be cancelled"));
     }
 
@@ -334,10 +326,12 @@ pub async fn create_point_cloud_generation(
         }
     } else {
         match axum::extract::Multipart::from_request(request, &state).await {
-            Ok(multipart) => match create_point_cloud_generation_multipart(state, multipart).await {
-                Ok(job) => (StatusCode::ACCEPTED, Json(job)).into_response(),
-                Err(error) => invalid_request(error.to_string()),
-            },
+            Ok(multipart) => {
+                match create_point_cloud_generation_multipart(state, multipart).await {
+                    Ok(job) => (StatusCode::ACCEPTED, Json(job)).into_response(),
+                    Err(error) => invalid_request(error.to_string()),
+                }
+            }
             Err(rejection) => invalid_request(rejection.to_string()),
         }
     }
@@ -386,7 +380,7 @@ async fn create_point_cloud_generation_multipart(
         parse_generation_upload(multipart, &workspace).await?;
     let model = upload
         .model
-        .context("missing required multipart field `model` (`pi3` or `pi3x`)")?;
+        .context("missing required multipart field `model` (`pi3`, `pi3x` or `vggt`)")?;
 
     let record = create_job_record(NewJobRecord {
         job_id,
@@ -399,14 +393,7 @@ async fn create_point_cloud_generation_multipart(
         webhook_url: None,
     });
 
-    spawn_point_cloud_generation(
-        state,
-        record,
-        upload.source,
-        upload.conditions,
-        options,
-    )
-    .await
+    spawn_point_cloud_generation(state, record, upload.source, upload.conditions, options).await
 }
 
 async fn create_point_cloud_generation_json(

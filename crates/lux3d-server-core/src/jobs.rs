@@ -79,10 +79,7 @@ impl JobStore {
             .map(|jobs| {
                 jobs.values()
                     .filter(|record| {
-                        matches!(
-                            record.object.status.as_str(),
-                            "queued" | "in_progress"
-                        )
+                        matches!(record.object.status.as_str(), "queued" | "in_progress")
                     })
                     .count()
             })
@@ -165,7 +162,10 @@ impl JobStore {
         self.inner
             .read()
             .ok()
-            .and_then(|jobs| jobs.get(id).map(|record| record.cancel_token.is_cancelled()))
+            .and_then(|jobs| {
+                jobs.get(id)
+                    .map(|record| record.cancel_token.is_cancelled())
+            })
             .unwrap_or(false)
     }
 
@@ -180,8 +180,7 @@ impl JobStore {
             .read()
             .ok()
             .map(|jobs| {
-                jobs
-                    .iter()
+                jobs.iter()
                     .filter_map(|(id, record)| {
                         record
                             .object
@@ -256,13 +255,40 @@ pub async fn spawn_point_cloud_generation(
 ) -> Result<GenerationObject> {
     let model = record.object.model.clone();
     ensure!(
-        matches!(model.as_str(), "pi3" | "pi3x"),
-        "unsupported point-cloud model `{model}`; expected `pi3` or `pi3x`"
+        matches!(model.as_str(), "pi3" | "pi3x" | "vggt"),
+        "unsupported point-cloud model `{model}`; expected \"pi3\", \"pi3x\" or \"vggt\""
     );
+    if model == "vggt" {
+        ensure!(
+            conditions.is_none(),
+            "`conditions` is not supported for `vggt`"
+        );
+        ensure!(
+            !options.vo.unwrap_or(false),
+            "`vo` is not supported for `vggt`"
+        );
+        ensure!(
+            options.chunk_size.is_none(),
+            "`chunk_size` is not supported for `vggt`"
+        );
+        ensure!(
+            options.overlap.is_none(),
+            "`overlap` is not supported for `vggt`"
+        );
+        ensure!(
+            options.inject_condition.is_empty(),
+            "`inject_condition` is not supported for `vggt`"
+        );
+    }
 
     let job_id = record.object.id.clone();
     state.jobs.insert(record);
-    let response = state.jobs.get(&job_id).expect("job just inserted").object.clone();
+    let response = state
+        .jobs
+        .get(&job_id)
+        .expect("job just inserted")
+        .object
+        .clone();
     record_generation_started(&model);
 
     let state_for_task = state.clone();
@@ -282,6 +308,8 @@ pub async fn spawn_point_cloud_generation(
         let started = Instant::now();
         let cache_model = if model == "pi3" {
             "pi3"
+        } else if model == "vggt" {
+            "vggt"
         } else if options.vo.unwrap_or(false) {
             "pi3x_vo"
         } else {
@@ -321,7 +349,8 @@ pub async fn spawn_point_cloud_generation(
                                 .map_err(anyhow::Error::from)
                         })?,
                         "pi3x" if options.vo.unwrap_or(false) => {
-                            let inject_conditions = parse_inject_conditions(&options.inject_condition);
+                            let inject_conditions =
+                                parse_inject_conditions(&options.inject_condition);
                             runtime.models.with_pi3x_vo(|pipeline| {
                                 let inference = pipeline
                                     .infer_from_path(
@@ -352,6 +381,18 @@ pub async fn spawn_point_cloud_generation(
                                 .export_ply(&inference, &output_path)
                                 .map_err(anyhow::Error::from)
                         })?,
+                        "vggt" => runtime.models.with_vggt(|pipeline| {
+                            let inference = pipeline
+                                .infer_from_path(&source, options.interval, &device)
+                                .map_err(anyhow::Error::from)?;
+                            pipeline
+                                .export_ply_with_threshold(
+                                    &inference,
+                                    &output_path,
+                                    options.conf_threshold.unwrap_or(1.0),
+                                )
+                                .map_err(anyhow::Error::from)
+                        })?,
                         _ => bail!("unsupported point-cloud model `{model}`"),
                     }
                     Ok(output_path)
@@ -369,10 +410,7 @@ pub async fn spawn_point_cloud_generation(
 
         match result {
             Ok(output_path) => {
-                if let Err(error) = state_for_task
-                    .jobs
-                    .mark_completed(&job_id, output_path)
-                {
+                if let Err(error) = state_for_task.jobs.mark_completed(&job_id, output_path) {
                     tracing::error!("failed to mark job completed: {error}");
                 } else {
                     record_generation_finished(&model, "completed", elapsed);
@@ -383,9 +421,8 @@ pub async fn spawn_point_cloud_generation(
                 let status = if error.to_string().contains("cancelled") {
                     let _ = state_for_task.jobs.mark_cancelled(&job_id);
                     "cancelled"
-                } else if let Err(update_error) = state_for_task
-                    .jobs
-                    .mark_failed(&job_id, error.to_string())
+                } else if let Err(update_error) =
+                    state_for_task.jobs.mark_failed(&job_id, error.to_string())
                 {
                     tracing::error!("failed to mark job failed: {update_error}");
                     "failed"
@@ -412,11 +449,19 @@ pub async fn spawn_mesh_generation(
         model == "triposr",
         "unsupported mesh model `{model}`; expected `triposr`"
     );
-    ensure!(options.mc_resolution >= 2, "mc_resolution must be at least 2");
+    ensure!(
+        options.mc_resolution >= 2,
+        "mc_resolution must be at least 2"
+    );
 
     let job_id = record.object.id.clone();
     state.jobs.insert(record);
-    let response = state.jobs.get(&job_id).expect("job just inserted").object.clone();
+    let response = state
+        .jobs
+        .get(&job_id)
+        .expect("job just inserted")
+        .object
+        .clone();
     record_generation_started(&model);
 
     let state_for_task = state.clone();
@@ -467,13 +512,9 @@ pub async fn spawn_mesh_generation(
                         let inference = pipeline
                             .infer_from_path(&source, &device)
                             .map_err(anyhow::Error::from)?;
-                        let mesh = pipeline.extract_mesh(
-                            &inference.scene_codes,
-                            mc_resolution,
-                            mc_threshold,
-                            8192,
-                        )
-                        .map_err(anyhow::Error::from)?;
+                        let mesh = pipeline
+                            .extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)
+                            .map_err(anyhow::Error::from)?;
                         pipeline
                             .export_obj(&mesh, &output_path)
                             .map_err(anyhow::Error::from)
@@ -493,10 +534,7 @@ pub async fn spawn_mesh_generation(
 
         match result {
             Ok(output_path) => {
-                if let Err(error) = state_for_task
-                    .jobs
-                    .mark_completed(&job_id, output_path)
-                {
+                if let Err(error) = state_for_task.jobs.mark_completed(&job_id, output_path) {
                     tracing::error!("failed to mark job completed: {error}");
                 } else {
                     record_generation_finished(&model, "completed", elapsed);
@@ -507,9 +545,8 @@ pub async fn spawn_mesh_generation(
                 let status = if error.to_string().contains("cancelled") {
                     let _ = state_for_task.jobs.mark_cancelled(&job_id);
                     "cancelled"
-                } else if let Err(update_error) = state_for_task
-                    .jobs
-                    .mark_failed(&job_id, error.to_string())
+                } else if let Err(update_error) =
+                    state_for_task.jobs.mark_failed(&job_id, error.to_string())
                 {
                     tracing::error!("failed to mark job failed: {update_error}");
                     "failed"
@@ -537,8 +574,12 @@ async fn maybe_deliver_webhook(state: &Lux3dState, job_id: &str, event: &'static
 
 fn parse_inject_conditions(values: &[String]) -> Pi3xInjectConditions {
     Pi3xInjectConditions {
-        pose: values.iter().any(|value| value.eq_ignore_ascii_case("pose")),
-        depth: values.iter().any(|value| value.eq_ignore_ascii_case("depth")),
+        pose: values
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("pose")),
+        depth: values
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case("depth")),
         ray: values.iter().any(|value| {
             value.eq_ignore_ascii_case("ray") || value.eq_ignore_ascii_case("intrinsic")
         }),

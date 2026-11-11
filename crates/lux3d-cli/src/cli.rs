@@ -2,14 +2,14 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 use lux3d_core::runtime::{
-    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSrPipeline,
+    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSrPipeline, VggtPipeline,
 };
 use lux3d_core::{ModelAssetOptions, ModelFamily, WeightLocator, ensure_canonical_weights};
 
 #[derive(Debug, Parser, PartialEq)]
 #[command(
     name = "lux3d",
-    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, and TripoSR."
+    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, TripoSR, and VGGT."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -120,6 +120,7 @@ pub enum Family {
     Pi3,
     Pi3x,
     Triposr,
+    Vggt,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
@@ -167,9 +168,7 @@ fn describe_device(backend: DeviceBackend, device: &candle_core::Device) -> Stri
                     Ok(cuda) => {
                         let stream = cuda.cuda_stream();
                         let ctx = stream.context();
-                        let name = ctx
-                            .name()
-                            .unwrap_or_else(|_| format!("cuda:{gpu_id}"));
+                        let name = ctx.name().unwrap_or_else(|_| format!("cuda:{gpu_id}"));
                         let cc = ctx
                             .compute_capability()
                             .map(|(maj, min)| format!("{maj}.{min}"))
@@ -243,6 +242,7 @@ impl Family {
             Self::Pi3 => ModelFamily::Pi3,
             Self::Pi3x => ModelFamily::Pi3x,
             Self::Triposr => ModelFamily::TripoSr,
+            Self::Vggt => ModelFamily::Vggt,
         }
     }
 }
@@ -254,18 +254,21 @@ impl Command {
                 Family::Pi3 => "pi3",
                 Family::Pi3x => "pi3x",
                 Family::Triposr => "triposr",
+                Family::Vggt => "vggt",
             },
             Self::Weights(args) => match args.command {
                 WeightsCommand::Normalize(ref family) => match family.family {
                     Family::Pi3 => "pi3",
                     Family::Pi3x => "pi3x",
                     Family::Triposr => "triposr",
+                    Family::Vggt => "vggt",
                 },
             },
             Self::Run(args) => match args.family {
                 Family::Pi3 => "pi3",
                 Family::Pi3x => "pi3x",
                 Family::Triposr => "triposr",
+                Family::Vggt => "vggt",
             },
         }
     }
@@ -303,18 +306,7 @@ pub fn normalize_weights(
     output_dir: PathBuf,
 ) -> anyhow::Result<String> {
     let python = python_executable(&repo_root, family);
-    let script = repo_root
-        .join("3d-rs")
-        .join("tools")
-        .join("python_baseline")
-        .join("normalize_weights.py");
-
-    if !python.is_file() {
-        anyhow::bail!("missing python executable at `{}`", python.display());
-    }
-    if !script.is_file() {
-        anyhow::bail!("missing normalizer script at `{}`", script.display());
-    }
+    let script = normalizer_script(&repo_root)?;
 
     let family_name = family.as_str();
     let output = std::process::Command::new(&python)
@@ -325,7 +317,14 @@ pub fn normalize_weights(
         .arg(&raw_model_dir)
         .arg("--output-dir")
         .arg(&output_dir)
-        .output()?;
+        .output()
+        .map_err(|source| {
+            anyhow::anyhow!(
+                "failed to start Python interpreter `{}` for `{family_name}`: {source}; \
+                 install Python or set LUX3D_PYTHON",
+                python.display()
+            )
+        })?;
 
     if !output.status.success() {
         anyhow::bail!(
@@ -385,6 +384,17 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
             &args.output,
             &device,
         )?,
+        ModelFamily::Vggt => {
+            reject_unsupported_vggt_options(&args)?;
+            run_vggt(
+                model_assets,
+                &args.source,
+                args.interval,
+                args.conf_threshold,
+                &args.output,
+                &device,
+            )?
+        }
     }
 
     // Backend CPU-fallback observability: nonzero values = hidden host/CPU compute.
@@ -471,6 +481,60 @@ fn run_pi3(
     }
     let t2 = std::time::Instant::now();
     pipeline.export_ply(&inference, output)?;
+    if stage_time {
+        eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
+    }
+    Ok(())
+}
+
+/// VGGT exposes point/depth/camera inference only. Reject Pi3X VO and
+/// TripoSR meshing options instead of silently ignoring them.
+fn reject_unsupported_vggt_options(args: &RunArgs) -> anyhow::Result<()> {
+    if args.conditions.is_some() {
+        anyhow::bail!("`--conditions` is not supported for `vggt`");
+    }
+    if args.vo {
+        anyhow::bail!("`--vo` is not supported for `vggt`");
+    }
+    if args.chunk_size.is_some() {
+        anyhow::bail!("`--chunk-size` is not supported for `vggt`");
+    }
+    if args.overlap.is_some() {
+        anyhow::bail!("`--overlap` is not supported for `vggt`");
+    }
+    if !args.inject_condition.is_empty() {
+        anyhow::bail!("`--inject-condition` is not supported for `vggt`");
+    }
+    if args.mc_resolution.is_some() {
+        anyhow::bail!("`--mc-resolution` is not supported for `vggt`");
+    }
+    if args.mc_threshold.is_some() {
+        anyhow::bail!("`--mc-threshold` is not supported for `vggt`");
+    }
+    Ok(())
+}
+
+fn run_vggt(
+    model_assets: ModelAssetOptions,
+    source: &Path,
+    interval: Option<usize>,
+    conf_threshold: Option<f32>,
+    output: &Path,
+    device: &candle_core::Device,
+) -> anyhow::Result<()> {
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+    let t0 = std::time::Instant::now();
+    let pipeline = VggtPipeline::load(model_assets)?;
+    if stage_time {
+        eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+    }
+    let t1 = std::time::Instant::now();
+    let inference = pipeline.infer_from_path(source, interval, device)?;
+    if stage_time {
+        eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+    }
+    let t2 = std::time::Instant::now();
+    pipeline.export_ply_with_threshold(&inference, output, conf_threshold.unwrap_or(1.0))?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
     }
@@ -580,14 +644,58 @@ fn run_triposr(
     Ok(())
 }
 
+fn normalizer_script(repo_root: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let candidates = [
+        repo_root
+            .join("tools")
+            .join("python_baseline")
+            .join("normalize_weights.py"),
+        repo_root
+            .join("candle-3d")
+            .join("tools")
+            .join("python_baseline")
+            .join("normalize_weights.py"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("tools")
+            .join("python_baseline")
+            .join("normalize_weights.py"),
+        repo_root
+            .join("3d-rs")
+            .join("tools")
+            .join("python_baseline")
+            .join("normalize_weights.py"),
+    ];
+    for candidate in candidates {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "missing normalizer script `tools/python_baseline/normalize_weights.py` under `{}`",
+        repo_root.display()
+    )
+}
+
 fn python_executable(repo_root: &std::path::Path, family: ModelFamily) -> PathBuf {
-    repo_root
+    if let Some(override_path) = std::env::var_os("LUX3D_PYTHON") {
+        return PathBuf::from(override_path);
+    }
+    let env_root = repo_root
         .join("3d")
         .join("_generated")
         .join("python-envs")
-        .join(family.as_str())
-        .join("Scripts")
-        .join("python.exe")
+        .join(family.as_str());
+    for candidate in [
+        env_root.join("Scripts").join("python.exe"),
+        env_root.join("bin").join("python"),
+    ] {
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    PathBuf::from(if cfg!(windows) { "python" } else { "python3" })
 }
 
 #[cfg(test)]
@@ -631,6 +739,65 @@ mod tests {
             "pi3",
         ]);
         assert_eq!("pi3", cli.command.family_name());
+    }
+
+    #[test]
+    fn routes_inspect_vggt_family() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "inspect",
+            "--repo-root",
+            repo_root().to_string_lossy().as_ref(),
+            "vggt",
+        ]);
+        assert_eq!("vggt", cli.command.family_name());
+    }
+
+    #[test]
+    fn routes_run_vggt_family() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "vggt",
+            "--source",
+            repo_root()
+                .join("test-assets")
+                .join("pi3-frames")
+                .to_string_lossy()
+                .as_ref(),
+            "--model-path",
+            canonical_package_dir(ModelFamily::Vggt)
+                .to_string_lossy()
+                .as_ref(),
+            "--conf-threshold",
+            "1.0",
+            "--output",
+            repo_root()
+                .join("3d")
+                .join("_generated")
+                .join("vggt.ply")
+                .to_string_lossy()
+                .as_ref(),
+        ]);
+        assert_eq!("vggt", cli.command.family_name());
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(Some(1.0), args.conf_threshold);
+        super::reject_unsupported_vggt_options(&args).expect("vggt supported options");
+    }
+
+    #[test]
+    fn run_vggt_rejects_pi3x_only_options() {
+        let cli = Cli::parse_from([
+            "lux3d", "run", "vggt", "--source", "frames", "--vo", "--output", "out.ply",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        let error = super::reject_unsupported_vggt_options(&args)
+            .expect_err("--vo must be rejected for vggt");
+        assert!(error.to_string().contains("--vo"));
     }
 
     #[test]
@@ -840,6 +1007,17 @@ mod tests {
                 "inspect output must stay path-free, found `{forbidden}`"
             );
         }
+    }
+
+    #[test]
+    fn resolves_normalizer_script_in_this_checkout() {
+        let script = super::normalizer_script(&repo_root()).expect("normalizer script");
+        assert!(script.is_file(), "resolved script must exist");
+        assert!(
+            script.ends_with("tools/python_baseline/normalize_weights.py"),
+            "unexpected script path: {}",
+            script.display()
+        );
     }
 
     #[test]
