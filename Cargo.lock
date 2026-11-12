@@ -490,7 +490,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 [[package]]
 name = "candle-core"
 version = "0.1.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 dependencies = [
  "ash",
  "byteorder",
@@ -556,7 +556,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 dependencies = [
  "cudaforge",
 ]
@@ -564,7 +564,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.11.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 dependencies = [
  "block2",
  "half",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.1.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 dependencies = [
  "candle-core 0.1.0",
  "candle-metal-kernels",
@@ -594,14 +594,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-transformers"
+version = "0.1.0"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
+dependencies = [
+ "byteorder",
+ "candle-core 0.1.0",
+ "candle-nn",
+ "fancy-regex 0.19.2",
+ "num-traits",
+ "rand 0.9.5",
+ "rayon",
+ "serde",
+ "serde_json",
+ "serde_plain",
+ "tracing",
+]
+
+[[package]]
 name = "candle-vulkan-kernels"
 version = "0.1.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 
 [[package]]
 name = "candle-wgpu-kernels"
 version = "0.1.0"
-source = "git+https://github.com/FerrisMind/candle?rev=f94d26ebd86b55ca2da766549a702fbec33c2d1c#f94d26ebd86b55ca2da766549a702fbec33c2d1c"
+source = "git+https://github.com/FerrisMind/candle?rev=deaf38f3bb657a36e53b7f8456f88c21e3248f3e#deaf38f3bb657a36e53b7f8456f88c21e3248f3e"
 
 [[package]]
 name = "cast"
@@ -1286,6 +1304,17 @@ name = "fancy-regex"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
 dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
@@ -2268,6 +2297,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
+name = "isomesh"
+version = "0.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527ebcb3a2b25fc7acb92a8e00c0c69950e6953b89fb63e5bcd3714f9248da02"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2520,11 +2558,13 @@ dependencies = [
  "anyhow",
  "candle-core 0.1.0",
  "candle-nn",
+ "candle-transformers",
  "criterion",
  "dirs",
  "fs2",
  "hf-hub",
  "image",
+ "isomesh",
  "lin_alg",
  "mcubes",
  "mistralrs-vision",
@@ -4128,6 +4168,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_plain"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ce1fc6db65a611022b23a0dec6975d63fb80a302cb3388835ff02c097258d50"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4574,7 +4623,7 @@ dependencies = [
  "dary_heap",
  "derive_builder",
  "esaxx-rs",
- "fancy-regex",
+ "fancy-regex 0.17.0",
  "getrandom 0.3.4",
  "itertools 0.14.0",
  "log",
