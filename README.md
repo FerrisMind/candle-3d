@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>Rust workspace for clean-room 3D inference, contract inspection, and weight canonicalization.</b><br>
-  CUDA-first runtime for Pi3, Pi3X, TripoSR, and VGGT.
+  CUDA-first runtime for Pi3, Pi3X, TripoSR, VGGT, and TripoSG.
 </p>
 
 <p align="center">
@@ -46,15 +46,19 @@ Supported model families:
 - `triposr`
 - `vggt` — VGGT-1B multi-view point/depth/camera inference. Original weights are
   CC-BY-NC-4.0 (non-commercial); the commercial checkpoint is distributed separately.
+- `triposg` — TripoSG image-to-mesh inference (DINOv2-large encoder, 21-block rectified-flow
+  DiT, SDF VAE decoder/encoder, reference-default flash decoder + clean-room DiffDMC). MIT
+  licensed; the BriaRMBG 1.4 fallback for RGB input ships as the separate `rmbg-1.4` package
+  under the BRIA license.
 
 ## Key Features
 
 - `lux3d-core` implements contracts, runtime loading, export logic, and weight validation.
 - `lux3d-cli` exposes `inspect`, `weights normalize`, and `run`.
-- `lux3d-server-core` exposes an OpenAI-style async HTTP API for Pi3, Pi3X, TripoSR, and VGGT generation.
+- `lux3d-server-core` exposes an OpenAI-style async HTTP API for Pi3, Pi3X, TripoSR, VGGT, and TripoSG generation.
 - Python baseline tooling lives in [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Model-family-specific licensing can be inspected through the CLI before redistribution.
-- **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). CUDA is the primary backend; the Pi3/Pi3X/TripoSR and VGGT paths have Vulkan correctness checks (see [Performance](#performance)). WGPU remains experimental — may be unstable, produce wrong results, or not work at all depending on hardware and drivers.
+- **Experimental:** Vulkan and WGPU inference via `--device vulkan` / `--device wgpu` (build with `--features vulkan` / `--features wgpu`). CUDA is the primary backend; the Pi3/Pi3X/TripoSR and VGGT paths have Vulkan correctness checks, and TripoSG has Vulkan/WGPU smoke coverage (see [Performance](#performance)). WGPU remains experimental — may be unstable, produce wrong results, or not work at all depending on hardware and drivers.
 
 ## Demo
 
@@ -87,6 +91,7 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3x
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> vggt
+cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposg
 ```
 
 ### Normalize Canonical Weights
@@ -96,7 +101,155 @@ cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-mod
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-pi3x-dir> --output-dir <canonical-pi3x-dir> pi3x
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposg-dir> --output-dir <canonical-triposg-dir> triposg
 ```
+
+### Quantize Weights to GGUF
+
+`weights quantize` packs the canonical `model.safetensors` into `model.gguf`.
+Only rank-2 `*.weight` matrices become GGUF blocks; norms, biases, embeddings,
+convolutions, and rows that do not divide into the dtype block stay in the
+fallback dtype. Quantized linears run through `QMatMul` (integer dot-product
+kernels), everything else is dequantized on demand.
+
+The converter embeds the sibling `resolved_config.json` in GGUF metadata, so
+`model.gguf` can be used as a **standalone package**: put it alone in a
+directory and pass that directory as `--model-path`. The loader synthesizes
+the manifest/checksums and reads the config from the GGUF. If `model.gguf`
+sits next to a full canonical package, the package files are still validated
+and the GGUF supplies the weights. Rank-0 tensors (training-only buffers such
+as BatchNorm `num_batches_tracked`) are omitted; they are not used at
+inference. `--model-path` also accepts a standalone `.gguf` file directly, so
+quantized files can be distributed flat (`TripoSG-1.5B-Q8_0.gguf`,
+`VGGT-1B-Q8_0.gguf`, ...).
+
+`general.architecture` is derived from the resolved config: top-level
+`architecture`, then `family`, then the model name (`triposg`, `vggt`,
+`rmbg`). For example RMBG writes `BriaRMBG`, TripoSG writes `triposg`, and
+VGGT (whose config has neither key) writes `vggt`. `lux3d.family` always
+records the runtime package family.
+
+```powershell
+# Q8_0 weights, F16 fallback (reference-quality default)
+cargo run -p lux3d-cli -- weights quantize triposg `
+  --source <canonical-triposg-dir>/model.safetensors `
+  --output <gguf-triposg-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
+# K-quants: smaller files, 256-wide blocks
+cargo run -p lux3d-cli -- weights quantize vggt `
+  --source <canonical-vggt-dir>/model.safetensors `
+  --output <gguf-vggt-dir>/model.gguf --dtype q4_k --fallback-dtype f16
+
+# RMBG-1.4 is an auxiliary package: separate GGUF, F16, same standalone rules.
+cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
+  --source <canonical-rmbg-dir>/model.safetensors `
+  --output <gguf-rmbg-dir>/model.gguf --dtype f16 --fallback-dtype f16
+
+# Run with only the GGUF directories; no safetensors/manifest/checksums needed.
+cargo run -p lux3d-cli -- run triposg --device cuda `
+  --model-path <gguf-triposg-dir> --rmbg-model-path <gguf-rmbg-dir> `
+  --source <image> --output out.obj
+
+# Optional: `--all-2d` also quantizes non-`*.weight` rank-2 tensors;
+# `--prefix transformer.` (repeatable) restricts quantization for bisection.
+```
+
+Supported `--dtype` values: `f16`, `f32`, `bf16`, `q8_0`, `q4_0`, `q4_1`,
+`q5_0`, `q5_1`, `q2_k`, `q3_k`, `q4_k`, `q5_k`, `q6_k`. `q8_1`/`q8_k` are
+activation-side GGML types and are rejected as weight targets. A GGUF created
+without an embedded config (no sibling `resolved_config.json` at conversion
+time) can still sit next to a full canonical package, but is rejected as a
+standalone package.
+
+Measured on the bundled canonical packages (`RTX 3060 12 GiB`; TripoSG
+`--steps 2 --num-tokens 1024 --flash-octree-depth 5`, VGGT 3 frames):
+
+| model | variant | GGUF size | weights kept |
+|---|---|---|---|
+| TripoSG | canonical F32 | 7.40 GiB | — |
+| TripoSG | q8_0 | 1.97 GiB | 527 matrices |
+| TripoSG | q6_k | 1.52 GiB | 525 |
+| TripoSG | q5_k | 1.28 GiB | 525 |
+| TripoSG | q4_k | 1.05 GiB | 525 |
+| VGGT | canonical F32 | 4.68 GiB | — |
+| VGGT | q8_0 | 1.33 GiB | 384 |
+| VGGT | q6_k | 1.09 GiB | 331 |
+| VGGT | q5_k | 0.95 GiB | 331 |
+| VGGT | q4_k | 0.82 GiB | 331 |
+
+RMBG-1.4 (auxiliary): F32 0.16 GiB → F16 0.08 GiB; 686 tensors written,
+112 rank-0 training buffers omitted.
+
+### Quantization Fidelity
+
+`scripts/compare_geometry.py` computes drift against the float reference:
+symmetric Chamfer-L1 (relative to the reference bbox diagonal), F-score@tau,
+surface voxel IoU, normal consistency for meshes; pointmap/depth PSNR,
+AbsRel, Chamfer and camera-pose AUC for VGGT tensor dumps.
+`scripts/eval_quantization.py` runs the reference plus every quantized package
+and prints the table.
+
+```powershell
+# Mesh drift (TripoSG/TripoSR)
+python scripts/compare_geometry.py mesh <reference.obj> <quantized.obj>
+
+# VGGT: dump raw tensors next to the PLY, then compare
+cargo run -p lux3d-cli -- run vggt --model-path <pkg> --source <frames> --output <out.ply> --dump-npz <out.npz>
+python scripts/compare_geometry.py vggt <reference.npz> <quantized.npz>
+
+# One-shot sweep over several quantized packages
+python scripts/eval_quantization.py triposg --binary target/release/lux3d-cli.exe `
+  --reference <canonical-triposg-dir> --variant q8_0=<dir-q8_0> --variant q4_k=<dir-q4_k> `
+  --source <input-image> --device cuda --output-dir out/eval -- --steps 2 --num-tokens 1024 --flash-octree-depth 5
+```
+
+TripoSG mesh drift (2 steps, 1024 tokens, depth 5; reference is the same
+backend's F32 mesh):
+
+| variant | backend | CD rel | F@1% | voxel IoU | VRAM (delta) | wall |
+|---|---|---|---|---|---|---|
+| q8_0 | CUDA | 0.026% | 0.996 | 0.994 | 3.1 GiB | 10.4 s |
+| q8_0 | Vulkan | 0.184% | 0.978 | 0.970 | 3.9 GiB | 13.3 s |
+| q6_k | CUDA | 0.135% | 0.988 | 0.988 | — | — |
+| q6_k | Vulkan | 0.134% | 0.995 | 0.995 | — | — |
+| q5_k | CUDA | 0.155% | 0.993 | 0.994 | — | — |
+| q5_k | Vulkan | 0.224% | 0.980 | 0.984 | — | — |
+| q4_k | CUDA | 0.253% | 0.973 | 0.953 | 2.2 GiB | 10.0 s |
+| q4_k | Vulkan | 0.180% | 0.982 | 0.972 | 2.3 GiB | 12.7 s |
+| F32 | CUDA | — | — | — | 8.6 GiB | 14.9 s |
+| F32 | Vulkan | — | — | — | 8.8 GiB | 17.1 s |
+
+Two-step sampling is input-sensitive. On a deliberately harsh RGB input
+(`mesh-input-rgb.png`, exercising the RMBG path) Q5_K and Q4_0 drifted to
+~1.4% Chamfer while Q4_K stayed at 0.23% and Q8_0 at 0.06%. The outliers are
+repeatable on that input but do not reproduce on the alpha input above, so
+treat Q5_K/Q4_0 as input-dependent and prefer Q8_0/Q6_K/Q4_K for deployment.
+
+VGGT (3 frames; reference is the same backend's F32 tensors; pose AUC on the
+2 relative frame pairs):
+
+| variant | backend | pointmap PSNR | depth PSNR | depth AbsRel | CD rel | pose AUC@5 | VRAM (delta) |
+|---|---|---|---|---|---|---|---|
+| q8_0 | CUDA | 53.1 dB | 48.1 dB | 0.0038 | 0.274% | 1.0 | 4.7 GiB |
+| q8_0 | Vulkan | 55.9 dB | 53.5 dB | 0.0020 | 0.182% | 1.0 | 4.4 GiB |
+| q8_0 | WGPU | 55.4 dB | 51.0 dB | 0.0027 | 0.193% | 1.0 | — |
+| q6_k | CUDA | 45.7 dB | 44.8 dB | 0.0053 | 0.571% | 1.0 | — |
+| q6_k | Vulkan | 46.5 dB | 49.5 dB | 0.0026 | 0.413% | 0.5 | — |
+| q5_k | CUDA | 34.7 dB | 35.9 dB | 0.0144 | 1.54% | 0.0 | — |
+| q5_k | Vulkan | 36.4 dB | 35.0 dB | 0.0180 | 1.39% | 1.0 | — |
+| q4_k | CUDA | 24.7 dB | 23.5 dB | 0.0683 | 3.50% | 0.0 | 4.2 GiB |
+| q4_k | Vulkan | 26.9 dB | 25.8 dB | 0.0511 | 2.84% | 0.0 | 3.7 GiB |
+| F32 | CUDA | — | — | — | — | — | 6.7 GiB |
+| F32 | Vulkan | — | — | — | — | — | 7.3 GiB |
+
+Recommendations: TripoSG stays within ~0.25% Chamfer even at Q4_K, so Q4_K/Q5_K
+are practical there. VGGT is pose-sensitive: Q8_0 is near-lossless, Q6_K is an
+acceptable fallback, Q5_K is marginal, and Q4_K is not viable (pointmap and
+camera pose collapse), matching the published finding that naive 4-bit
+quantization destroys VGGT-style reconstruction. Use `--dump-npz` and the
+script above on your own validation set before shipping a lower-bit variant.
+RMBG-1.4 is a small matting network and is kept as a separate F16 GGUF, which
+halves its footprint with no measurable mask drift.
 
 ### Run Inference
 
@@ -121,6 +274,16 @@ cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <i
 # VGGT canonical package auto-download (oxide-lab/VGGT-1B)
 cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
+# TripoSG -> OBJ (defaults: 50 rectified-flow steps, CFG 7.0, seed 42, flash decoder depth 9)
+cargo run -p lux3d-cli --features cuda -- run triposg --rmbg-model-path <canonical-rmbg-dir> --model-path <canonical-triposg-dir> --source <input-image> --output <output-file.obj>
+# Flash decoder is the reference default; disable it for dense/hierarchical marching cubes:
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --flash-decoder false --dense-octree-depth 8 --hierarchical-octree-depth 9 --output <output-file.obj>
+# Faster preview: 2 steps, flash depth 5
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --steps 2 --flash-decoder true --flash-octree-depth 5 --output <preview.obj>
+
+# TripoSG canonical package auto-download (oxide-lab/TripoSG); RMBG 1.4 is a separate package
+cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.obj>
+
 # Auto-download canonical packages from Hugging Face into the user cache
 cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
@@ -130,6 +293,7 @@ cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --ou
 > ```powershell
 > cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
 > cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
+> cargo run -p lux3d-cli --features vulkan -- run triposg --device vulkan --source <input-image> --steps 2 --num-tokens 1024 --flash-octree-depth 5 --output <preview.obj>
 > ```
 >
 > These paths are experimental and not verified in CI. Inference may be unstable, produce incorrect output, or fail entirely depending on your GPU, driver, and OS. Use CUDA for production workloads.
@@ -150,14 +314,14 @@ Generation endpoints accept `multipart/form-data` and return `202 Accepted` with
 | Endpoint | Models | Output |
 |----------|--------|--------|
 | `POST /v1/point-clouds/generations` | `pi3`, `pi3x`, `vggt` | PLY |
-| `POST /v1/meshes/generations` | `triposr` | OBJ |
+| `POST /v1/meshes/generations` | `triposr`, `triposg` | OBJ |
 
 Common fields:
 
-- `model` — required for point clouds (`pi3`, `pi3x`, or `vggt`), optional for meshes (`triposr` default)
+- `model` — required for point clouds (`pi3`, `pi3x`, or `vggt`), optional for meshes (`triposr` default; set `triposg` for TripoSG)
 - `source` — required upload (`.zip` frame archive, `.mp4` video, or image)
 - `conditions` — optional Pi3X conditions file
-- `options` — optional JSON string with family-specific parameters
+- `options` — optional JSON string with family-specific parameters (TripoSG: `steps`, `guidance_scale`, `seed`, `num_tokens`, `use_flash_decoder`, `flash_octree_depth`, `dense_octree_depth`, `hierarchical_octree_depth`, `query_chunk_size`)
 
 Workflow:
 
@@ -167,6 +331,12 @@ curl -X POST http://127.0.0.1:8080/v1/meshes/generations `
   -F "model=triposr" `
   -F "source=@input.png" `
   -F "options={\"mc_resolution\":256,\"mc_threshold\":25.0}"
+
+# TripoSG job (completed downloads as triposg.obj)
+curl -X POST http://127.0.0.1:8080/v1/meshes/generations `
+  -F "model=triposg" `
+  -F "source=@input.png" `
+  -F "options={\"steps\":50,\"use_flash_decoder\":true,\"flash_octree_depth\":9}"
 
 # 2. Poll job status
 curl http://127.0.0.1:8080/v1/generations/gen_...
@@ -202,9 +372,29 @@ Measured inference time (`[stage] infer`: preprocessing + neural pass, single it
 | triposr (single image) | **1.23 s** | 3.36 s | 4.89 s | 2.73× | 3.98× |
 
 VGGT-1B was added later and is measured separately (fork rev `f94d26eb`, 2026-11-11): 3 frames at
-518×518, including camera, DPT depth, and DPT point heads. RTX 3060 12 GiB: CUDA **6.95 s**,
-Vulkan 15.54 s (2.24×), CPU 107.66 s. The CUDA peak is 9.4 GiB at 3 frames; on an NVIDIA L4 23 GiB
+518×518, including camera, DPT depth, and DPT point heads. RTX 3060 12 GiB: CUDA **6.76 s**,
+Vulkan 10.96 s (1.62×), WGPU 19.34 s, CPU 107.66 s. The CUDA peak is 6.52 GiB at 3 frames
+(Vulkan 6.1–7.4 GiB and WGPU 6.8 GiB across repeated runs); on an NVIDIA L4 23 GiB
 the peak is 7.98 GiB at 3 frames (4.19 s infer) and 8.30 GiB at 12 frames (26.21 s infer).
+
+TripoSG is measured per stage on an RTX 3060 12 GiB (Windows/WDDM, release build, single image
+`test-assets/mesh-input.png`):
+
+| Stage | CUDA | Vulkan | WGPU |
+|---|---:|---:|---:|
+| load | 7.12 s | 6.68 s | 6.60 s |
+| infer (preprocess + DINO + denoise) | 6.84 s | 8.56 s | 13.13 s |
+| mesh (flash SDF + DiffDMC + trimesh processing) | 0.73 s | 0.26 s | 0.45 s |
+| export | 0.00 s | 0.00 s | 0.01 s |
+| peak VRAM | 8.29 GiB | 8.36 GiB | 8.65 GiB |
+
+All three columns use the same command (`--steps 2 --num-tokens 1024 --flash-octree-depth 5`).
+TripoSG keeps all three submodels (DINOv2, DiT, VAE) resident — 7.4 GiB of weights — so memory is
+dominated by the checkpoint. After the memory-default fixes (Vulkan transient pool 0 / inflight
+grace 2, WGPU 2 MiB allocator blocks) Vulkan peaks within 0.1 GiB of CUDA and WGPU within ~0.4 GiB
+(occasional ±0.5 GiB run-to-run variance from async staging).
+12 GiB is enough for the 2048-token preview (Vulkan: load 6.56 s, infer 12.86 s, peak 9.13 GiB),
+but 16 GiB is still recommended for the 50-step / depth-9 reference run.
 
 Warm-loop criterion (10 samples, steady state — the candle-bench protocol, one back-to-back window): vulkan 3.14 s / 4.90 s per iter (1.16×/1.20× of CUDA 2.72 s / 4.09 s), wgpu 8.21 s / 24.0 s (3.0×/5.9×). The biggest single lever was a fused LayerNorm+RoPE kernel (`rope_layernorm.comp`/`.wgsl` in the fork): one dispatch per q/k replaces the slow-path LayerNorm, both surrounding copies, and the 8-op rope chain at every rope site, cutting wgpu pi3 from 54.9 s to 8.21 s warm.
 
@@ -212,9 +402,9 @@ Correctness: outputs of every backend × model combination were verified against
 
 Memory behavior under repeated inference (10-iteration loop, same process):
 
-- **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×. VGGT peaks at 9.4 GiB for 3 frames on the 12 GiB card, with DPT frames processed one at a time (`LUX3D_VGGT_DPT_CHUNK`, default 1).
-- **Vulkan** — flat ~7.5 GiB; retention is bounded by the inflight byte budget (256 MiB × grace band 8) and a 2 GiB reusable GPU buffer pool (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES`). Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
-- **WGPU** — 10-iteration pi3x benchmark completes with a 10.4 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`).
+- **CUDA** — flat; the decoder attention scores buffer is bounded to 768 MiB by query-axis chunking (`LUX3D_MAX_SDPA_SCORES_BYTES`), which removes a ~4 GiB transient that previously fragmented the CUDA memory pool and stalled a 12 GiB card ~100×. VGGT peaks at 6.5 GiB for 3 frames on the 12 GiB card, with DPT frames processed one at a time (`LUX3D_VGGT_DPT_CHUNK`, default 1).
+- **Vulkan** — flat; retention is bounded by the inflight byte budget (256 MiB × grace band 2) and transients are not pooled by default (`CANDLE_VK_INFLIGHT_GRACE`, `CANDLE_VK_POOL_MAX_BYTES=0`); the pool can be re-enabled for latency-first runs. Batch caps are tuned from flush-reason profiling: transfer bytes 512 MiB (`CANDLE_VK_MAX_BATCH_TRANSFER_BYTES`), descriptor sets 8× dispatches — closing the batch per big activation copy cost ~4-9 ms of WDDM fence-signal latency per submission.
+- **WGPU** — 10-iteration pi3x benchmark completes with a 10.4 GiB VRAM peak and zero errors (previously OOM'd by iteration ~3); free pool / recycle backlog / in-flight retention are each byte-capped (`CANDLE_WGPU_POOL_MAX_BYTES`, `CANDLE_WGPU_INFLIGHT_MAX_BYTES`) and 2 MiB allocator blocks remove most checkpoint slack (`CANDLE_WGPU_BLOCK_BYTES`).
 
 Known gaps: the remaining Vulkan/CUDA warm gap (1.16–1.20×) is the structural WDDM submit tax (~4-9 ms per submission on a strictly dependent op chain) — a platform property code cannot reach; Linux without WDDM would close it. WGPU remains 3.0–5.9× behind warm (down from 13.9–19.5×), dominated by WGSL GEMM quality plus the same inter-pass WDDM gaps. A criterion harness for whole-model benches lives in `crates/lux3d-core/benches/` (run one `(backend, model)` pair per process: `LUX3D_BENCH_DEVICE=… LUX3D_BENCH_MODEL=… cargo bench -p lux3d-core --bench bench_main --features vulkan,wgpu`).
 
@@ -224,9 +414,10 @@ Known gaps: the remaining Vulkan/CUDA warm gap (1.16–1.20×) is the structural
 - Cargo with support for `edition = "2024"`
 - Python 3.x for baseline tooling and normalization
 - CUDA-capable NVIDIA hardware for verified runtime inference
-- **Vulkan and WGPU backends** (via [FerrisMind/candle](https://github.com/FerrisMind/candle) `wgpu/vulkan` fork): verified for correctness and memory stability on RTX 3060 (see [Performance](#performance)); slower than CUDA, WGPU substantially so.
+- **Vulkan and WGPU backends** (via [FerrisMind/candle](https://github.com/FerrisMind/candle) `wgpu/vulkan` fork): verified for correctness and memory stability on RTX 3060 (see [Performance](#performance)); slower than CUDA, WGPU substantially so. TripoSG peaks within ~0.4 GiB of CUDA on both backends, so the 7.9 GB weight set leaves ~3 GiB of headroom on a 12 GiB card.
 - Metal backend on macOS is not tested in this repository, but may be supported theoretically.
 - Canonical model package directories supplied with `--model-path`, or downloadable from Hugging Face into the user cache
+- TripoSG needs roughly 8.3–8.7 GiB at the 1024-token preview (9.1 GiB at 2048 tokens) on all three backends; 16 GiB+ is recommended for the 50-step reference run.
 
 ## License
 
@@ -235,3 +426,5 @@ The code and documentation in this repository are licensed under Apache 2.0. See
 Upstream model assets and canonicalized model artifacts keep their original licenses and usage restrictions. Review model-family-specific terms before redistribution.
 
 **VGGT-1B:** the original code and `facebook/VGGT-1B` checkpoint are CC-BY-NC-4.0 (non-commercial). Commercial use requires the separately distributed `facebook/VGGT-1B-Commercial` checkpoint. The canonical package used by `--model-path`/auto-download is published as `oxide-lab/VGGT-1B`; the raw upstream checkpoint stays at `facebook/VGGT-1B`. The native track head is intentionally not implemented in this inference slice; the contract records that exclusion.
+
+**TripoSG:** the upstream code and weights are MIT licensed. The raw checkpoint lives at `VAST-AI/TripoSG`; the canonical package used by `--model-path`/auto-download is published as `oxide-lab/TripoSG`. Upstream `load_image` uses BriaRMBG 1.4 when a valid alpha channel is missing; Lux3D implements that fallback fully. The RMBG weights do not join the MIT TripoSG package: they are normalized into the separate `rmbg-1.4` canonical package under the BRIA source-available/non-commercial license (commercial use requires a BRIA license), resolved via `--rmbg-model-path` or a sibling `rmbg-1.4` directory. Upstream's pipeline defaults to the flash decoder (`use_flash_decoder=True`, `flash_octree_depth=9`); Lux3D implements the same flash SDF schedule plus a clean-room Rust DiffDMC. Diso (CC BY-NC 4.0) source and tables are not copied, so ambiguous checkerboard cells may resolve differently; the non-flash dense/hierarchical path remains available via `--flash-decoder false`. The full VAE encode API (FPS sampling, `vae.quant`, mean/logvar/std distribution) is also implemented even though the image-to-3D pipeline only calls `vae.decode`.

@@ -541,6 +541,77 @@ CUDA-only; Metal has no test host in this repository.
 
 ---
 
+## 14. TripoSG Pipeline
+
+### US-14.1: TripoSG loads from canonical weights
+As the model, TripoSG loads the DINOv2-large image encoder, the 21-block rectified-flow DiT,
+and the SDF VAE decoder/encoder from the canonical safetensors files.
+
+**Functions:**
+- `runtime/triposg.rs:TripoSgPipeline::load()` ✅
+- `runtime/triposg.rs:TripoSgModelBundle::load()` — one `VarBuilder`, prefixes `image_encoder` / `transformer` / `vae` ✅
+- `runtime/triposg_dino.rs:TripoSgDinoEncoder::load()` — 24 layers, width 1024, patch 14 ✅
+- `runtime/triposg_dit.rs:TripoSgDiT::load()` — 21 blocks, width 2048, UViT long skips ✅
+- `runtime/triposg_vae.rs:TripoSgVaeDecoder::load()` — 16 self-attention blocks + cross block ✅
+- `runtime/triposg_vae.rs:TripoSgVaeEncoder::load()` — cross block + 8 self blocks + `vae.quant` ✅
+- `weights/mod.rs` — `triposg` family normalization/validation (9 raw files, MIT) ✅
+- `weights/auxiliary.rs` — separate `rmbg-1.4` canonical package (798 tensors, BRIA license) ✅
+
+### US-14.2: TripoSG preprocess matches the reference image loader
+As a user, I get the reference alpha-composite branch, the BriaRMBG 1.4 fallback for
+RGB/invalid-alpha inputs, 10% square padding, short-edge-256 / center-crop-224 resize, and
+ImageNet normalization.
+
+**Functions:**
+- `preprocess/triposg.rs:TripoSgPreprocessStage::prepare_inputs_from_path()` ✅
+- RGBA alpha validation (20-bin histogram, ≥1% at both ends) + white composite ✅
+- `runtime/rmbg.rs:RmbgModel` — IS-Net/RSU BriaRMBG 1.4, sigmoid(d1) mask ✅
+- Exact reference mask postprocess: min-max, Otsu, 8-connected label, `remove_small_objects(200)`, largest contour bbox ✅
+- `--rmbg-model-path` / `LUX3D_RMBG_MODEL_PATH`; auto-discovery of a sibling `rmbg-1.4` package ✅
+- torchvision-v2 antialiased bicubic (bit-exact vs the installed transformers path) ✅
+
+### US-14.3: TripoSG inference and SDF mesh export
+As a user, I can denoise with classifier-free guidance and extract an OBJ mesh through the
+reference-default flash decoder/DiffDMC (or the dense/hierarchical marching-cubes fallback).
+
+**Functions:**
+- `runtime/triposg.rs:TripoSgPipeline::infer_from_path()` / `infer_with_latents()` ✅
+- `runtime/triposg.rs:TripoSgPipeline::sample_latents()` — seeded SplitMix64/Box-Muller (not torch-RNG-identical) ✅
+- `runtime/triposg_dit.rs:denoise()` — rectified-flow Euler, CFG 7.0, uncond/cond batch order ✅
+- `runtime/triposg_flash.rs:flash_sdf_grid()` — reference resolution schedule, mini-grid dense pass, near-surface mask/dilation/refinement, NaN sentinel ✅
+- `runtime/triposg_flash.rs:flash_dual_marching_cubes()` — clean-room DMC (patch averaging, quads, min-max-cosine triangulation, world mapping) ✅
+- `runtime/triposg_field.rs:hierarchical_sdf_grid()` — non-flash dense depth 8 + refinement to depth 9 ✅
+- `geometry/triposg.rs:TripoSgGeometryStage::assemble_cpu()` — non-flash level 0, position-bit dedup ✅
+- `runtime/triposg.rs:TripoSgPipeline::encode_point_cloud*()` — full VAE encode API (FPS + quant distribution) ✅
+- `export/triposg.rs:TripoSgExportStage` — ASCII OBJ ✅
+- CLI `run triposg` (steps / guidance / seed / num-tokens / depths / flash options); server `triposg` mesh jobs (`triposg.obj`) ✅
+
+**Tests:** `runtime_triposg` (CUDA parity against the 50-step Python golden, dense depth-8 SDF,
+8→9 refinement, CPU 5→6 refinement, smoke), `preprocess_triposg` (bit-exact resize +
+normalization), `rmbg_triposg` (sigmoid and mask-preprocess parity), `flash_triposg`
+(depth-6/7 CPU grid+mesh parity, depth-9 CUDA grid parity with exact NaN mask, depth-9
+reference-SDF DMC/final-trimesh parity, synthetic exact DMC cases, trimesh-style compaction),
+`vae_encode_triposg` (FPS, quant parameters, distribution/sample), `geometry_triposg`
+(golden depth-9 mesh bbox/volume/face count), `pipeline_triposg` (end-to-end seeded +
+baseline-latents parity), plus `model_spec` / `contracts` / `weights` cases ✅
+
+The 50-step CFG ODE is numerically chaotic: steps 1 / 10 / 25 match within 1e-2 / 5e-2 / 5e-2,
+while final latents are accepted statistically (mean ≤ 2e-2, relative L2 ≤ 1.2e-1, max ≤ 4.0). A
+cross-environment reference control drifts at least as much. VAE/grid/mesh parity remains tight
+when decoding the baseline latents (SDF probe max 1.78e-3; mesh bbox 1.7e-4, volume 8.3e-5).
+
+**Provenance/licensing:** RMBG/BriaRMBG background removal is implemented and normalized
+into the separate `rmbg-1.4` canonical package because its BRIA license differs from
+TripoSG's MIT license. Flash decoder/DiffDMC matches upstream's default
+(`use_flash_decoder=True`, depth 9); the DMC kernel is a clean-room Rust implementation of
+the documented algorithm, while Diso's CC BY-NC source/tables are not copied, so ambiguous
+checkerboard cells may resolve differently. The full VAE encoder + `vae.quant` encode API
+(FPS, quant parameters, `TripoSgLatentDistribution`) is implemented for parity/tooling even
+though the image-to-3D pipeline itself calls only `vae.decode`. The contract has no
+exclusions.
+
+---
+
 ## Summary Statistics
 
 | Category | Functions | Test Coverage |
@@ -550,6 +621,7 @@ CUDA-only; Metal has no test host in this repository.
 | Pi3X Pipeline | 24 | Minimal |
 | TripoSR Pipeline | 22 | Minimal |
 | VGGT Pipeline | 18 | CUDA parity |
+| TripoSG Pipeline | 23 | CUDA golden + statistical |
 | Attention Math | 10 | None |
 | Resampling | 4 | None |
 | Camera Ops | 4 | None |
@@ -563,5 +635,5 @@ CUDA-only; Metal has no test host in this repository.
 | Path Utils | 3 | Yes |
 | Error Types | 2 | N/A |
 | Vision Preproc | 1 | None |
-| **Total** | **~183** | **~10%** |
+| **Total** | **~206** | **~10%** |
 
