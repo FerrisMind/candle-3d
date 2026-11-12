@@ -1,11 +1,14 @@
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, Linear, Module, VarBuilder, attention::AttnMask, layer_norm};
+use candle_nn::{LayerNorm, Module, attention::AttnMask, layer_norm};
+use super::nn_blocks::Linear;
+use crate::weights::VarBuilder;
 
-use super::{nn_blocks::linear_fwd,
+use super::{
     attention_math::{
         Rope2d, RopeEmbeddings, apply_layernorm_rope, apply_rope, exact_query_chunked_sdpa,
         position_getter,
     },
+    nn_blocks::linear_fwd,
     nn_blocks::{LayerScale, Mlp, linear},
 };
 

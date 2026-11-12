@@ -2,8 +2,14 @@ use std::{path::Path, sync::Arc};
 
 use candle_core::{DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{
-    ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Linear, Module, VarBuilder,
-    conv_transpose2d, group_norm, layer_norm, linear, linear_no_bias,
+    ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Module, conv_transpose2d,
+    group_norm, layer_norm,
+};
+use crate::weights::VarBuilder;
+use super::nn_blocks::{
+    Linear,
+    linear_dense as linear,
+    linear_no_bias_dense as linear_no_bias,
 };
 use image::{DynamicImage, ImageBuffer, ImageReader, Rgba, RgbaImage};
 
@@ -167,7 +173,10 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR image tokenizer forward failed: {source}"),
             })?;
-        eprintln!("[triposr-stage] image_tokens shape {:?}", *image_tokens.shape());
+        eprintln!(
+            "[triposr-stage] image_tokens shape {:?}",
+            *image_tokens.shape()
+        );
         let seed_tokens = bundle.triplane_tokenizer.forward(1).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR triplane tokenizer forward failed: {source}"),
@@ -179,7 +188,10 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR backbone forward failed: {source}"),
             })?;
-        eprintln!("[triposr-stage] backbone_tokens shape {:?}", *backbone_tokens.shape());
+        eprintln!(
+            "[triposr-stage] backbone_tokens shape {:?}",
+            *backbone_tokens.shape()
+        );
         let detokenized = bundle
             .triplane_tokenizer
             .detokenize(&backbone_tokens)
@@ -192,7 +204,10 @@ impl TripoSrPipeline {
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSR post processor forward failed: {source}"),
             })?;
-        eprintln!("[triposr-stage] scene_codes shape {:?}", *scene_codes.shape());
+        eprintln!(
+            "[triposr-stage] scene_codes shape {:?}",
+            *scene_codes.shape()
+        );
         Ok((
             image_tokens,
             seed_tokens,
@@ -606,7 +621,9 @@ fn resize_vit_position_embeddings_32(position_embeddings: &Tensor) -> CandleResu
     Tensor::cat(&[&cls, &resized], 1)
 }
 
-fn resize_patch_pos_embed_bicubic(
+/// HF `F.interpolate(..., mode="bicubic", align_corners=False)` on a square
+/// patch grid, shared with the TripoSG DINOv2 encoder.
+pub(super) fn resize_patch_pos_embed_bicubic(
     flat: &[f32],
     source_hw: usize,
     target_h: usize,

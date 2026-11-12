@@ -16,15 +16,22 @@ pub use contracts::{
     Pi3InputSource, Pi3NeuralSpec, Pi3PreprocessSpec, Pi3xExportSpec, Pi3xGeometrySpec,
     Pi3xNeuralSpec, Pi3xPreprocessSpec, PreprocessSpec, RgbRange, RuntimeArchitecture,
     RuntimeGeometry, RuntimeTensorContract, SourceDisposition, SpatialSize, TensorDType,
-    TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, VendorSource,
-    VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec, VggtPointCloud, VggtPreparedBatch,
-    VggtPreprocessSpec, VggtRawInput, VggtRuntimeGeometry, VggtSceneCode,
+    TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, TripoSgExportSpec,
+    TripoSgGeometrySpec, TripoSgMesh, TripoSgNeuralSpec, TripoSgPreparedImage,
+    TripoSgPreprocessSpec, TripoSgRawInput, TripoSgRmbgSpec, TripoSgRuntimeGeometry,
+    TripoSgSceneCode, VendorSource, VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec,
+    VggtPointCloud, VggtPreparedBatch, VggtPreprocessSpec, VggtRawInput, VggtRuntimeGeometry,
+    VggtSceneCode,
 };
 pub use error::{Lux3dError, Result};
+pub use runtime::{RmbgConfig, RmbgModel};
 pub use weights::{
-    CanonicalChecksumEntry, CanonicalChecksums, CanonicalWeightSet, CanonicalWeightSetPaths,
-    CanonicalWeightsManifest, CanonicalizationPlan, FutureWeightLoader, ModelAssetOptions,
-    RawWeightFormat, WeightLocator, ensure_canonical_weights, load_canonical_weights,
+    AuxiliaryWeightSetPaths, AuxiliaryWeightsManifest, CanonicalChecksumEntry, CanonicalChecksums,
+    CanonicalWeightSet, CanonicalWeightSetPaths, CanonicalWeightsManifest, CanonicalizationPlan,
+    FutureWeightLoader, ModelAssetOptions, QuantizeOptions, QuantizeReport, RawWeightFormat,
+    WeightLocator, dtype_from_name, dtype_name, ensure_canonical_weights,
+    load_auxiliary_canonical_weights, load_canonical_weights, quantize_auxiliary_checkpoint,
+    quantize_checkpoint,
 };
 
 /// Enable candle's reduced-precision GPU GEMM opt-ins (TF32-class coopmat on

@@ -8,9 +8,11 @@ use std::{
 
 use candle_core::{D, DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{
-    Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Linear,
-    Module, VarBuilder, conv_transpose2d, conv2d, group_norm, layer_norm,
+    Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Module,
+    conv_transpose2d, conv2d, group_norm, layer_norm,
 };
+use crate::weights::VarBuilder;
+use super::nn_blocks::Linear;
 use image::imageops::FilterType;
 use ndarray::{Array3, Axis, Ix3};
 use ndarray_npy::NpzReader;
@@ -24,11 +26,11 @@ use crate::{
 #[cfg(feature = "vision-preproc")]
 use super::vision_preproc;
 use super::{
-    nn_blocks::linear_fwd,
     DeviceLocalCache,
     attention_math::{
         Rope2d, apply_layernorm_rope, apply_rope, exact_query_chunked_sdpa, position_getter,
     },
+    nn_blocks::linear_fwd,
     nn_blocks::{LayerScale, Mlp, linear},
     path_utils::sort_paths_natural,
     pi3_decoder::{load_pi3_camera_decoder, load_pi3_conf_decoder, load_pi3_point_decoder},
@@ -294,7 +296,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X encoder forward failed: {source}"),
             })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.encoder: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.encoder: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
 
@@ -444,7 +449,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X decoder failed: {source}"),
             })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.decoder: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.decoder: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
 
@@ -467,7 +475,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X confidence decoder failed: {source}"),
             })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.head_decoders: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.head_decoders: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
         let pos_hw = pos
@@ -476,7 +487,10 @@ impl Pi3xPipeline {
                 message: format!("Pi3X metric position reshape failed: {source}"),
             })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.metric_decode: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.metric_decode: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
         let metric_hidden = bundle
@@ -513,7 +527,10 @@ impl Pi3xPipeline {
             })?;
 
         if stage_time {
-            eprintln!("[stage]   pi3x.metric_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.metric_head: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
         let point_feat = ret_point.i((.., 5.., ..)).map_err(|source| {
@@ -534,18 +551,21 @@ impl Pi3xPipeline {
             message: format!("Pi3X point head failed: {source}"),
         })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.point_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.point_head: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
         // Keep the point math at rank-4 (batch*frames leading): the wgpu and
         // vulkan backends cap elementwise/binary ops at rank-4, and the extra
         // frame dim carries no information here. Rank-5 views are restored
         // right after the math for the consumers below (pure reshapes).
-        let xy4 = point_outputs[0]
-            .permute((0, 2, 3, 1))
-            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+        let xy4 = point_outputs[0].permute((0, 2, 3, 1)).map_err(|source| {
+            Lux3dError::CanonicalWeightsValidation {
                 message: format!("Pi3X xy permute failed: {source}"),
-            })?;
+            }
+        })?;
         let z4 = point_outputs[1]
             .permute((0, 2, 3, 1))
             .and_then(|tensor| tensor.clamp(f64::NEG_INFINITY, 15.0))
@@ -555,10 +575,11 @@ impl Pi3xPipeline {
             })?;
         let local_points4 = Tensor::cat(
             &[
-                &xy4.broadcast_mul(&z4)
-                    .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                &xy4.broadcast_mul(&z4).map_err(|source| {
+                    Lux3dError::CanonicalWeightsValidation {
                         message: format!("Pi3X local point xy*z failed: {source}"),
-                    })?,
+                    }
+                })?,
                 &z4,
             ],
             D::Minus1,
@@ -604,7 +625,10 @@ impl Pi3xPipeline {
             })?;
 
         if stage_time {
-            eprintln!("[stage]   pi3x.pose_math: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.pose_math: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         t_stage = std::time::Instant::now();
         let conf_feat =
@@ -626,7 +650,10 @@ impl Pi3xPipeline {
             message: format!("Pi3X confidence head failed: {source}"),
         })?;
         if stage_time {
-            eprintln!("[stage]   pi3x.conf_head: {:.2}s", t_stage.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]   pi3x.conf_head: {:.2}s",
+                t_stage.elapsed().as_secs_f64()
+            );
         }
         let confidence_logits = conf_outputs[0]
             .permute((0, 2, 3, 1))
@@ -637,17 +664,18 @@ impl Pi3xPipeline {
 
         // Per-batch metric scaling in rank-4: broadcast against a (batch, 1,
         // 1, 1) view instead of a rank-5 (batch, 1, 1, 1, 1) one.
-        let metric_head = metric
-            .reshape((batch, 1, 1, 1))
-            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
-                message: format!("Pi3X metric broadcast reshape failed: {source}"),
-            })?;
-        let pixels = height * width;
-        let mut points = world_points_from_local_and_pose(&local_points, &camera_poses).map_err(|source| {
+        let metric_head = metric.reshape((batch, 1, 1, 1)).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
-                message: format!("Pi3X world point assembly failed: {source}"),
+                message: format!("Pi3X metric broadcast reshape failed: {source}"),
             }
         })?;
+        let pixels = height * width;
+        let mut points =
+            world_points_from_local_and_pose(&local_points, &camera_poses).map_err(|source| {
+                Lux3dError::CanonicalWeightsValidation {
+                    message: format!("Pi3X world point assembly failed: {source}"),
+                }
+            })?;
         points = points
             .reshape((batch, frames, pixels, 3))
             .and_then(|tensor| tensor.broadcast_mul(&metric_head))
@@ -1487,12 +1515,18 @@ impl Pi3xOutputBlock {
         let mut t_op = std::time::Instant::now();
         let x = candle_nn::ops::replication_pad2d(xs, 1)?;
         if stage_time {
-            eprintln!("[stage]       outblock.pad: {:.2}s", t_op.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]       outblock.pad: {:.2}s",
+                t_op.elapsed().as_secs_f64()
+            );
         }
         t_op = std::time::Instant::now();
         let x = self.conv_in.forward(&x)?.relu()?;
         if stage_time {
-            eprintln!("[stage]       outblock.conv_in+relu: {:.2}s", t_op.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]       outblock.conv_in+relu: {:.2}s",
+                t_op.elapsed().as_secs_f64()
+            );
         }
         t_op = std::time::Instant::now();
         let x = if kernel_size > 1 {
@@ -1502,7 +1536,10 @@ impl Pi3xOutputBlock {
         };
         let x = self.conv_out.forward(&x)?;
         if stage_time {
-            eprintln!("[stage]       outblock.conv_out: {:.2}s", t_op.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]       outblock.conv_out: {:.2}s",
+                t_op.elapsed().as_secs_f64()
+            );
         }
         Ok(x)
     }
@@ -1569,7 +1606,11 @@ impl Pi3xConvHead {
         let mut t_block = std::time::Instant::now();
         for (block_idx, block) in self.upsample_blocks.iter().enumerate() {
             if stage_time && block_idx < 2 {
-                eprintln!("[stage]     convhead.up{}: {:.2}s", block_idx, t_block.elapsed().as_secs_f64());
+                eprintln!(
+                    "[stage]     convhead.up{}: {:.2}s",
+                    block_idx,
+                    t_block.elapsed().as_secs_f64()
+                );
                 t_block = std::time::Instant::now();
             }
             if self.using_uv {
@@ -1590,12 +1631,18 @@ impl Pi3xConvHead {
             x = block.forward(&x)?;
         }
         if stage_time {
-            eprintln!("[stage]     convhead.up_last: {:.2}s", t_block.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]     convhead.up_last: {:.2}s",
+                t_block.elapsed().as_secs_f64()
+            );
         }
         let t_up = std::time::Instant::now();
         x = x.upsample_bilinear2d(img_h, img_w, false)?;
         if stage_time {
-            eprintln!("[stage]     convhead.bilinear: {:.2}s", t_up.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]     convhead.bilinear: {:.2}s",
+                t_up.elapsed().as_secs_f64()
+            );
         }
         if self.using_uv {
             x = Tensor::cat(
@@ -1618,7 +1665,10 @@ impl Pi3xConvHead {
             outputs.push(block.forward(&x, self.output_kernel_size)?);
         }
         if stage_time {
-            eprintln!("[stage]     convhead.output: {:.2}s", t_out.elapsed().as_secs_f64());
+            eprintln!(
+                "[stage]     convhead.output: {:.2}s",
+                t_out.elapsed().as_secs_f64()
+            );
         }
         let _ = seq;
         Ok(outputs)

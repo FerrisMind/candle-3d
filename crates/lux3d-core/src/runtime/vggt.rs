@@ -1,7 +1,9 @@
 use std::{path::Path, sync::Arc};
 
 use candle_core::{D, DType, Device, IndexOp, Module, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, Linear, VarBuilder, layer_norm};
+use candle_nn::{LayerNorm, layer_norm};
+use super::nn_blocks::Linear;
+use crate::weights::VarBuilder;
 
 use super::{
     attention_math::{
@@ -198,22 +200,26 @@ impl VggtAggregator {
         let register_token = vb.get((1, 2, 4, VGGT_EMBED_DIM), "register_token")?;
         let frame_blocks = (0..VGGT_DEPTH)
             .map(|idx| {
-                VggtBlock::load(
+                let block = VggtBlock::load(
                     vb.pp("frame_blocks").pp(idx.to_string()),
                     VGGT_EMBED_DIM,
                     VGGT_NUM_HEADS,
                     true,
-                )
+                )?;
+                super::drain_upload_staging(vb.device())?;
+                Ok(block)
             })
             .collect::<CandleResult<Vec<_>>>()?;
         let global_blocks = (0..VGGT_DEPTH)
             .map(|idx| {
-                VggtBlock::load(
+                let block = VggtBlock::load(
                     vb.pp("global_blocks").pp(idx.to_string()),
                     VGGT_EMBED_DIM,
                     VGGT_NUM_HEADS,
                     true,
-                )
+                )?;
+                super::drain_upload_staging(vb.device())?;
+                Ok(block)
             })
             .collect::<CandleResult<Vec<_>>>()?;
         Ok(Self {
@@ -322,12 +328,14 @@ impl VggtCameraHead {
     fn load(vb: VarBuilder) -> CandleResult<Self> {
         let trunk = (0..4)
             .map(|idx| {
-                VggtBlock::load(
+                let block = VggtBlock::load(
                     vb.pp("trunk").pp(idx.to_string()),
                     VGGT_CAMERA_DIM,
                     VGGT_NUM_HEADS,
                     false,
-                )
+                )?;
+                super::drain_upload_staging(vb.device())?;
+                Ok(block)
             })
             .collect::<CandleResult<Vec<_>>>()?;
         Ok(Self {
@@ -606,6 +614,54 @@ impl VggtPipeline {
     ) -> Result<()> {
         let point_cloud = self.geometry.assemble_cpu(output, conf_threshold)?;
         self.export.write_ply(&point_cloud, path)
+    }
+
+    /// Dump the raw inference tensors as `.npz` so a quantized run can be
+    /// compared against the float run (Chamfer / PSNR / camera-pose AUC).
+    pub fn export_inference_npz(
+        &self,
+        output: &VggtInferenceOutput,
+        path: &Path,
+    ) -> Result<()> {
+        use ndarray::{ArrayD, IxDyn};
+
+        let file = std::fs::File::create(path).map_err(|source| Lux3dError::ModelAssetIo {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut npz = ndarray_npy::NpzWriter::new(file);
+        let fields: [(&str, &Tensor); 7] = [
+            ("world_points", &output.world_points),
+            ("world_points_conf", &output.world_points_conf),
+            ("depth", &output.depth),
+            ("depth_conf", &output.depth_conf),
+            ("extrinsics", &output.extrinsics),
+            ("intrinsics", &output.intrinsics),
+            ("pose_enc", &output.pose_enc),
+        ];
+        for (name, tensor) in fields {
+            let tensor = tensor
+                .to_device(&Device::Cpu)
+                .and_then(|tensor| tensor.to_dtype(DType::F32))
+                .and_then(|tensor| tensor.contiguous())
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!("failed to stage `{name}` for npz: {source}"),
+                })?;
+            let shape = tensor.dims().to_vec();
+            let data = tensor
+                .flatten_all()
+                .and_then(|tensor| tensor.to_vec1::<f32>())
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!("failed to read `{name}` for npz: {source}"),
+                })?;
+            let array = ArrayD::from_shape_vec(IxDyn(&shape), data)
+                .map_err(|_| Lux3dError::InvalidInput("failed to build npz tensor"))?;
+            npz.add_array(name, &array)
+                .map_err(|_| Lux3dError::InvalidInput("failed to write npz tensor"))?;
+        }
+        npz.finish()
+            .map_err(|_| Lux3dError::InvalidInput("failed to finish npz"))?;
+        Ok(())
     }
 
     pub fn debug_forward(

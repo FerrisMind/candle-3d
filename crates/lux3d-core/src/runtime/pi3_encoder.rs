@@ -1,9 +1,12 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use candle_core::{D, IndexOp, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, Linear, Module, VarBuilder, layer_norm};
+use candle_nn::{LayerNorm, Module, layer_norm};
+use super::nn_blocks::Linear;
+use crate::weights::VarBuilder;
 
-use super::{nn_blocks::linear_fwd, 
+use super::{
+    nn_blocks::linear_fwd,
     nn_blocks::{LayerScale, Mlp, linear},
     resampling::compute_aa_cubic_weights,
 };
@@ -150,7 +153,11 @@ impl Pi3DinoEncoder {
         let norm = layer_norm(embed_dim, 1e-6, vb.pp("norm"))?;
         let vb_b = vb.pp("blocks");
         let blocks = (0..24)
-            .map(|idx| Block::new(vb_b.pp(idx.to_string()), embed_dim, 16))
+            .map(|idx| {
+                let block = Block::new(vb_b.pp(idx.to_string()), embed_dim, 16)?;
+                super::drain_upload_staging(vb.device())?;
+                Ok(block)
+            })
             .collect::<CandleResult<Vec<_>>>()?;
 
         Ok(Self {
@@ -234,7 +241,10 @@ impl Pi3DinoEncoder {
             let t = std::time::Instant::now();
             xs = block.forward(&xs)?;
             if stage_time && (idx < 3 || idx + 1 == self.blocks.len()) {
-                eprintln!("[stage]     enc.block{idx:02}: {:.3}s", t.elapsed().as_secs_f64());
+                eprintln!(
+                    "[stage]     enc.block{idx:02}: {:.3}s",
+                    t.elapsed().as_secs_f64()
+                );
             }
         }
         let xs = self.norm.forward(&xs)?;

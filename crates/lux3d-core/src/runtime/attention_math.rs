@@ -156,11 +156,7 @@ pub(crate) fn apply_rope(tokens: &Tensor, embeddings: &RopeEmbeddings) -> Candle
         && tokens.stride()[3] == 1
         && tokens.dtype() == DType::F32;
     if fused_ok {
-        return candle_nn::ops::rope_fused(
-            tokens,
-            &embeddings.cos_full,
-            &embeddings.sin_alt_full,
-        );
+        return candle_nn::ops::rope_fused(tokens, &embeddings.cos_full, &embeddings.sin_alt_full);
     }
     rope_apply(tokens, embeddings)
 }

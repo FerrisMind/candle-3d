@@ -7,6 +7,8 @@ pub enum ModelFamily {
     Pi3x,
     #[serde(rename = "triposr")]
     TripoSr,
+    #[serde(rename = "triposg")]
+    TripoSg,
     Vggt,
 }
 
@@ -16,6 +18,7 @@ impl ModelFamily {
             Self::Pi3 => "pi3",
             Self::Pi3x => "pi3x",
             Self::TripoSr => "triposr",
+            Self::TripoSg => "triposg",
             Self::Vggt => "vggt",
         }
     }
@@ -28,6 +31,7 @@ impl ModelFamily {
             Self::Pi3 => "oxide-lab/Pi3",
             Self::Pi3x => "oxide-lab/Pi3X",
             Self::TripoSr => "oxide-lab/TripoSR",
+            Self::TripoSg => "oxide-lab/TripoSG",
             Self::Vggt => "oxide-lab/VGGT-1B",
         }
     }

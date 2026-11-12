@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Mutex};
 
 use candle_core::{D, Device, DeviceLocation, IndexOp, Module, Result as CandleResult, Tensor};
 use candle_nn::{
-    Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, LayerNorm, VarBuilder,
-    conv_transpose2d, conv2d, conv2d_no_bias, layer_norm,
+    Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, LayerNorm, conv_transpose2d,
+    conv2d, conv2d_no_bias, layer_norm,
 };
+use crate::weights::VarBuilder;
 
 pub(crate) const DPT_PATCH_SIZE: usize = 14;
 pub(crate) const DPT_INTERMEDIATE_LAYERS: [usize; 4] = [4, 11, 17, 23];
@@ -319,6 +320,7 @@ impl VggtDptHead {
             scratch.pp("output_conv2").pp("2"),
         )?;
 
+        super::drain_upload_staging(vb.device())?;
         Ok(Self {
             norm,
             projects,

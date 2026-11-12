@@ -14,6 +14,53 @@ use image::imageops::FilterType;
 
 mod attention_math;
 mod nn_blocks;
+
+/// Drain asynchronous weight-upload staging after one model layer/block.
+///
+/// Vulkan and WGPU upload each tensor through backend staging buffers. Those
+/// copies are queued asynchronously, so loading a multi-GiB checkpoint without
+/// an intermediate drain retains a second copy of the weights in staging
+/// memory (measured: ~6.4 GiB host staging on Vulkan and ~7.3 GiB on WGPU for
+/// the 7.4 GiB TripoSG checkpoint). CUDA reclaims upload staging per copy, so
+/// its peak is just the live weight set. Synchronizing once per layer/block
+/// keeps the staging window at roughly one block while leaving the load time
+/// dominated by the weight upload itself.
+pub(crate) fn drain_upload_staging(device: &Device) -> candle_core::Result<()> {
+    if device.is_vulkan() || device.is_wgpu() {
+        device.synchronize()?;
+        log_wgpu_alloc(device, "wgpu-load");
+    }
+    Ok(())
+}
+
+/// Opt-in (`LUX3D_WGPU_MEM_STATS=1`) allocator telemetry for memory debugging.
+pub(crate) fn log_wgpu_alloc(device: &Device, label: &str) {
+    if std::env::var_os("LUX3D_WGPU_MEM_STATS").is_none() {
+        return;
+    }
+    if let Ok(wgpu) = device.as_wgpu_device() {
+        if let Some(report) = wgpu.allocator_report() {
+            eprintln!(
+                "[{label}] allocated={:.1} MiB reserved={:.1} MiB blocks={}",
+                report.total_allocated_bytes as f64 / (1024.0 * 1024.0),
+                report.total_reserved_bytes as f64 / (1024.0 * 1024.0),
+                report.blocks.len()
+            );
+            if std::env::var("LUX3D_WGPU_MEM_STATS").as_deref() == Ok("2") {
+                let mut allocations = report.allocations;
+                allocations.sort_by_key(|allocation| std::cmp::Reverse(allocation.size));
+                for allocation in allocations.iter().take(12) {
+                    eprintln!(
+                        "[{label}]   {}={:.1} MiB",
+                        allocation.name,
+                        allocation.size as f64 / (1024.0 * 1024.0)
+                    );
+                }
+            }
+        }
+    }
+}
+
 mod path_utils;
 mod pi3_decoder;
 mod pi3_encoder;
@@ -21,6 +68,13 @@ mod pi3_heads;
 mod pi3x;
 mod point_camera_ops;
 mod resampling;
+mod rmbg;
+mod triposg;
+mod triposg_dino;
+mod triposg_dit;
+mod triposg_field;
+mod triposg_flash;
+mod triposg_vae;
 mod triposr;
 mod triposr_field;
 mod vggt;
@@ -31,6 +85,23 @@ pub(crate) use pi3x::prepare_pi3x_inputs_with_stage;
 pub use pi3x::{
     Pi3xInferenceOutput, Pi3xInjectConditions, Pi3xPipeline, Pi3xPreparedInputs, Pi3xVoOutput,
     Pi3xVoPipeline,
+};
+pub use rmbg::{RmbgConfig, RmbgModel};
+pub(crate) use triposg::TRIPOSG_LATENT_CHANNELS;
+pub use triposg::{
+    TripoSgInferenceOutput, TripoSgMeshBuffers, TripoSgPipeline, TripoSgPreparedInputs,
+    TripoSgRunOptions,
+};
+pub use triposg_dino::TripoSgDinoEncoder;
+pub use triposg_dit::{RectifiedFlowSchedule, TripoSgDiT, TripoSgTransformerConfig, denoise};
+pub use triposg_field::{TripoSgSdfGrid, hierarchical_sdf_grid};
+pub use triposg_flash::{
+    TripoSgDmcMesh, TripoSgFlashGrid, compact_dmc_mesh, flash_dual_marching_cubes,
+    flash_resolutions, flash_sdf_grid,
+};
+pub use triposg_vae::{
+    TripoSgLatentDistribution, TripoSgVaeConfig, TripoSgVaeDecoder, TripoSgVaeEncoder,
+    sample_point_features, sample_point_features_with_indices,
 };
 pub(crate) use triposr::prepare_triposr_inputs_with_stage;
 pub use triposr::{TripoInferenceOutput, TripoMeshBuffers, TripoPreparedInputs, TripoSrPipeline};

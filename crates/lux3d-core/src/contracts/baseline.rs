@@ -173,13 +173,9 @@ impl BaselineManifest {
 }
 
 fn normalize_weight_files(paths: &[PathBuf]) -> Vec<String> {
-    paths
-        .iter()
-        .map(|path| {
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| path.to_string_lossy().into_owned())
-        })
-        .collect()
+    // Same duplicate-basename provenance rule as the weight locator: unique
+    // basenames keep the historical bare `<basename>` form, duplicated
+    // basenames are keyed `<parent-dir-name>/<basename>`. Pure generalization:
+    // every existing manifest has unique basenames, so keys are unchanged.
+    crate::weights::provenance_keys(paths.iter().map(|path| path.as_path()))
 }

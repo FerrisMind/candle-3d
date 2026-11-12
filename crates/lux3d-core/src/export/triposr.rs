@@ -73,12 +73,10 @@ impl TripoExportStage {
                 source,
             })?;
         }
-        writer
-            .flush()
-            .map_err(|source| Lux3dError::ModelAssetIo {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        writer.flush().map_err(|source| Lux3dError::ModelAssetIo {
+            path: path.to_path_buf(),
+            source,
+        })?;
         Ok(())
     }
 }

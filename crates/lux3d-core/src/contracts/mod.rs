@@ -5,6 +5,7 @@ mod pi3;
 mod pi3x;
 mod spec;
 mod stages;
+mod triposg;
 mod triposr;
 mod vggt;
 
@@ -24,9 +25,12 @@ pub use spec::{
     LicenseEntry, LicensePolicy, ModelSpec, NeuralSpec, Pi3ExportSpec, Pi3GeometrySpec,
     Pi3NeuralSpec, Pi3PreprocessSpec, Pi3xExportSpec, Pi3xGeometrySpec, Pi3xNeuralSpec,
     Pi3xPreprocessSpec, PreprocessSpec, RuntimeGeometry, RuntimeTensorContract, SourceDisposition,
-    TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, VendorSource,
-    VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec, VggtPreprocessSpec, VggtRuntimeGeometry,
+    TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, TripoSgExportSpec,
+    TripoSgGeometrySpec, TripoSgNeuralSpec, TripoSgPreprocessSpec, TripoSgRmbgSpec,
+    TripoSgRuntimeGeometry, VendorSource, VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec,
+    VggtPreprocessSpec, VggtRuntimeGeometry,
 };
 pub use stages::{ExportStage, GeometryStage, NeuralStage, PreprocessStage};
+pub use triposg::{TripoSgMesh, TripoSgPreparedImage, TripoSgRawInput, TripoSgSceneCode};
 pub use triposr::{TripoMesh, TripoPreparedImage, TripoRawInput, TripoSceneCode};
 pub use vggt::{VggtPointCloud, VggtPreparedBatch, VggtRawInput, VggtSceneCode};
