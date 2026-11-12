@@ -35,26 +35,35 @@ pub(crate) fn drain_upload_staging(device: &Device) -> candle_core::Result<()> {
 
 /// Opt-in (`LUX3D_WGPU_MEM_STATS=1`) allocator telemetry for memory debugging.
 pub(crate) fn log_wgpu_alloc(device: &Device, label: &str) {
-    if std::env::var_os("LUX3D_WGPU_MEM_STATS").is_none() {
-        return;
+    // Without the `wgpu` feature candle exposes a dummy backend whose
+    // `WgpuDevice` has no allocator report. Keep the default build warning-free.
+    #[cfg(not(feature = "wgpu"))]
+    {
+        let _ = (device, label);
     }
-    if let Ok(wgpu) = device.as_wgpu_device() {
-        if let Some(report) = wgpu.allocator_report() {
-            eprintln!(
-                "[{label}] allocated={:.1} MiB reserved={:.1} MiB blocks={}",
-                report.total_allocated_bytes as f64 / (1024.0 * 1024.0),
-                report.total_reserved_bytes as f64 / (1024.0 * 1024.0),
-                report.blocks.len()
-            );
-            if std::env::var("LUX3D_WGPU_MEM_STATS").as_deref() == Ok("2") {
-                let mut allocations = report.allocations;
-                allocations.sort_by_key(|allocation| std::cmp::Reverse(allocation.size));
-                for allocation in allocations.iter().take(12) {
-                    eprintln!(
-                        "[{label}]   {}={:.1} MiB",
-                        allocation.name,
-                        allocation.size as f64 / (1024.0 * 1024.0)
-                    );
+    #[cfg(feature = "wgpu")]
+    {
+        if std::env::var_os("LUX3D_WGPU_MEM_STATS").is_none() {
+            return;
+        }
+        if let Ok(wgpu) = device.as_wgpu_device() {
+            if let Some(report) = wgpu.allocator_report() {
+                eprintln!(
+                    "[{label}] allocated={:.1} MiB reserved={:.1} MiB blocks={}",
+                    report.total_allocated_bytes as f64 / (1024.0 * 1024.0),
+                    report.total_reserved_bytes as f64 / (1024.0 * 1024.0),
+                    report.blocks.len()
+                );
+                if std::env::var("LUX3D_WGPU_MEM_STATS").as_deref() == Ok("2") {
+                    let mut allocations = report.allocations;
+                    allocations.sort_by_key(|allocation| std::cmp::Reverse(allocation.size));
+                    for allocation in allocations.iter().take(12) {
+                        eprintln!(
+                            "[{label}]   {}={:.1} MiB",
+                            allocation.name,
+                            allocation.size as f64 / (1024.0 * 1024.0)
+                        );
+                    }
                 }
             }
         }
