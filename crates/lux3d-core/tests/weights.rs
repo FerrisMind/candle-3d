@@ -5,8 +5,8 @@ use std::{
 
 use lux3d_core::test_support::{resolve_raw_model_dir_for_tests, workspace_root};
 use lux3d_core::{
-    CanonicalizationPlan, FutureWeightLoader, ModelAssetOptions, ModelFamily, WeightLocator,
-    ensure_canonical_weights, load_canonical_weights,
+    CanonicalizationPlan, FutureWeightLoader, ModelAssetOptions, ModelFamily, RawWeightFormat,
+    WeightLocator, ensure_canonical_weights, load_canonical_weights,
 };
 
 fn required_raw_filenames(family: ModelFamily) -> &'static [&'static str] {
@@ -14,6 +14,17 @@ fn required_raw_filenames(family: ModelFamily) -> &'static [&'static str] {
         ModelFamily::Pi3 => &["model.safetensors"],
         ModelFamily::Pi3x => &["model.safetensors", "config.json"],
         ModelFamily::TripoSr => &["model.ckpt", "config.yaml"],
+        ModelFamily::TripoSg => &[
+            "transformer/diffusion_pytorch_model.safetensors",
+            "vae/diffusion_pytorch_model.safetensors",
+            "image_encoder_dinov2/model.safetensors",
+            "model_index.json",
+            "feature_extractor_dinov2/preprocessor_config.json",
+            "image_encoder_dinov2/config.json",
+            "scheduler/scheduler_config.json",
+            "transformer/config.json",
+            "vae/config.json",
+        ],
         ModelFamily::Vggt => &["model.safetensors", "config.json"],
     }
 }
@@ -32,7 +43,12 @@ fn create_raw_fixture(family: ModelFamily) -> (PathBuf, PathBuf, PathBuf) {
     let canonical_dir = root.join("canonical").join(family.as_str());
     fs::create_dir_all(&raw_dir).expect("raw fixture dir");
     for filename in required_raw_filenames(family) {
-        fs::write(raw_dir.join(filename), b"fixture").expect("raw fixture file");
+        let path = raw_dir.join(filename);
+        // Required filenames may be nested (TripoSG sharded layout).
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("raw fixture parent dir");
+        }
+        fs::write(&path, b"fixture").expect("raw fixture file");
     }
     (root, raw_dir, canonical_dir)
 }
@@ -54,6 +70,17 @@ fn vggt_canonical_package_repo_is_the_oxide_lab_mirror() {
     // The public `facebook/VGGT-1B` repository only ships the raw checkpoint;
     // the canonical four-file package lives in the oxide-lab mirror.
     assert_eq!("oxide-lab/VGGT-1B", ModelFamily::Vggt.huggingface_repo_id());
+}
+
+#[test]
+fn triposg_canonical_package_repo_is_the_oxide_lab_mirror() {
+    // The raw checkpoint lives at `VAST-AI/TripoSG` (raw shards,
+    // diffusers layout); the canonical four-file package is the oxide-lab
+    // mirror (public, files verified byte-identical 2026-11-12).
+    assert_eq!(
+        "oxide-lab/TripoSG",
+        ModelFamily::TripoSg.huggingface_repo_id()
+    );
 }
 
 #[test]
@@ -211,6 +238,200 @@ fn triposr_locator_finds_raw_checkpoint_and_canonical_target() {
         FutureWeightLoader::CandleMmapSafetensors,
         weights.future_loader
     );
+    cleanup_dir(&root);
+}
+
+fn triposg_raw_relative_files() -> [&'static str; 9] {
+    [
+        "transformer/diffusion_pytorch_model.safetensors",
+        "vae/diffusion_pytorch_model.safetensors",
+        "image_encoder_dinov2/model.safetensors",
+        "model_index.json",
+        "feature_extractor_dinov2/preprocessor_config.json",
+        "image_encoder_dinov2/config.json",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "vae/config.json",
+    ]
+}
+
+#[test]
+fn triposg_locator_finds_raw_shards_in_exact_order() {
+    let (root, raw_model_dir, canonical_dir) = create_raw_fixture(ModelFamily::TripoSg);
+    let locator = WeightLocator::new(raw_model_dir.clone(), canonical_dir.clone());
+    let weights = locator
+        .locate(ModelFamily::TripoSg)
+        .expect("triposg weights");
+
+    assert_eq!(ModelFamily::TripoSg, weights.family);
+    assert_eq!(RawWeightFormat::SafetensorsDirect, weights.raw_format);
+    let expected = triposg_raw_relative_files()
+        .into_iter()
+        .map(|relative| raw_model_dir.join(relative))
+        .collect::<Vec<_>>();
+    assert_eq!(expected, weights.raw_files.to_vec());
+    assert_eq!(canonical_dir, weights.canonical_root);
+    assert_eq!("model.safetensors", weights.canonical_filename);
+    assert_eq!(
+        FutureWeightLoader::CandleMmapSafetensors,
+        weights.future_loader
+    );
+    assert!(weights.license_note.contains("MIT"));
+    cleanup_dir(&root);
+}
+
+#[test]
+fn triposg_locator_finds_the_local_raw_checkpoint_dir() {
+    let raw_model_dir = workspace_root().join("models").join("TripoSG");
+    if !raw_model_dir.is_dir() {
+        eprintln!(
+            "skipping: local TripoSG raw dir {} is absent",
+            raw_model_dir.display()
+        );
+        return;
+    }
+
+    let canonical_dir = temp_fixture_root("triposg-local-canonical").join("triposg");
+    let locator = WeightLocator::new(raw_model_dir.clone(), canonical_dir);
+    let weights = locator
+        .locate(ModelFamily::TripoSg)
+        .expect("triposg weights from the local raw checkpoint dir");
+
+    let expected = triposg_raw_relative_files()
+        .into_iter()
+        .map(|relative| raw_model_dir.join(relative))
+        .collect::<Vec<_>>();
+    assert_eq!(expected, weights.raw_files.to_vec());
+    assert_eq!(RawWeightFormat::SafetensorsDirect, weights.raw_format);
+    assert_eq!("model.safetensors", weights.canonical_filename);
+    assert!(weights.license_note.contains("MIT"));
+}
+
+#[test]
+fn triposg_provenance_keys_disambiguate_duplicate_basenames() {
+    use sha2::{Digest, Sha256};
+
+    let sha256 = |path: &Path| -> String {
+        let bytes = fs::read(path).expect("read fixture for sha256");
+        let mut digest = Sha256::new();
+        digest.update(&bytes);
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+
+    let root = temp_fixture_root("triposg-provenance");
+    let raw_dir = root.join("raw");
+    let canonical_dir = root.join("canonical").join("triposg");
+
+    // Two raw shards share the basename `model.safetensors`; `config.json` is
+    // unique. Expected provenance keys: `a/model.safetensors`,
+    // `b/model.safetensors`, and the bare `config.json`.
+    for relative in ["a/model.safetensors", "b/model.safetensors", "config.json"] {
+        let path = raw_dir.join(relative);
+        fs::create_dir_all(path.parent().expect("fixture parent")).expect("fixture dir");
+        fs::write(&path, format!("payload-{relative}")).expect("fixture payload");
+    }
+
+    let plan = CanonicalizationPlan {
+        family: ModelFamily::TripoSg,
+        raw_format: RawWeightFormat::SafetensorsDirect,
+        raw_files: vec![
+            raw_dir.join("a/model.safetensors"),
+            raw_dir.join("b/model.safetensors"),
+            raw_dir.join("config.json"),
+        ]
+        .into_boxed_slice(),
+        canonical_root: canonical_dir.clone(),
+        canonical_filename: "model.safetensors".to_string(),
+        future_loader: FutureWeightLoader::CandleMmapSafetensors,
+        license_note: "test fixture".to_string(),
+    };
+
+    fs::create_dir_all(&canonical_dir).expect("canonical fixture dir");
+    fs::write(canonical_dir.join("model.safetensors"), b"canonical").expect("canonical fixture");
+    fs::write(canonical_dir.join("resolved_config.json"), b"{}").expect("config fixture");
+
+    let write_package = |manifest: serde_json::Value| {
+        let manifest_path = canonical_dir.join("manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("manifest fixture");
+        let mut files = vec!["model.safetensors", "resolved_config.json", "manifest.json"]
+            .into_iter()
+            .map(|relative| {
+                let path = canonical_dir.join(relative);
+                serde_json::json!({
+                    "relative_path": relative,
+                    "sha256": sha256(&path),
+                    "size_bytes": fs::metadata(&path).expect("metadata").len(),
+                })
+            })
+            .collect::<Vec<_>>();
+        files.sort_unstable_by(|a, b| {
+            a["relative_path"]
+                .as_str()
+                .cmp(&b["relative_path"].as_str())
+        });
+        let checksums = serde_json::json!({ "files": files });
+        fs::write(
+            canonical_dir.join("checksums.json"),
+            serde_json::to_string_pretty(&checksums).expect("serialize checksums"),
+        )
+        .expect("checksums fixture");
+    };
+
+    let manifest = serde_json::json!({
+        "family": "triposg",
+        "normalizer_version": 1,
+        "raw_files": ["a/model.safetensors", "b/model.safetensors", "config.json"],
+        "canonical_file": "model.safetensors",
+        "resolved_config_file": "resolved_config.json",
+        "tensor_count": 0,
+        "dtype_histogram": {},
+        "source_checksums": {
+            "a/model.safetensors": sha256(&raw_dir.join("a/model.safetensors")),
+            "b/model.safetensors": sha256(&raw_dir.join("b/model.safetensors")),
+            "config.json": sha256(&raw_dir.join("config.json")),
+        }
+    });
+    write_package(manifest);
+
+    let canonical =
+        ensure_canonical_weights(&plan).expect("duplicate-basename provenance keys must validate");
+    assert_eq!(
+        vec!["a/model.safetensors", "b/model.safetensors", "config.json"],
+        canonical.manifest.raw_files.to_vec()
+    );
+    assert_eq!(3, canonical.manifest.source_checksums.len());
+
+    // Bare `model.safetensors` keys must be rejected now that the raw
+    // basenames are duplicated: the parent-prefixed form is required.
+    let bare_manifest = serde_json::json!({
+        "family": "triposg",
+        "normalizer_version": 1,
+        "raw_files": ["model.safetensors", "model.safetensors", "config.json"],
+        "canonical_file": "model.safetensors",
+        "resolved_config_file": "resolved_config.json",
+        "tensor_count": 0,
+        "dtype_histogram": {},
+        "source_checksums": {
+            "model.safetensors": sha256(&raw_dir.join("a/model.safetensors")),
+            "config.json": sha256(&raw_dir.join("config.json")),
+        }
+    });
+    write_package(bare_manifest);
+
+    let rejected = ensure_canonical_weights(&plan);
+    assert!(
+        rejected.is_err(),
+        "bare duplicate-basename provenance keys must be rejected"
+    );
+
     cleanup_dir(&root);
 }
 
@@ -386,6 +607,110 @@ fn triposr_python_normalizer_is_idempotent() {
     assert_eq!(manifest_before, manifest_after);
     assert_eq!(checksums_before, checksums_after);
     let _ = std::fs::remove_dir_all(output_dir);
+}
+
+#[test]
+fn triposg_python_normalizer_merges_shards_and_provenance_keys() {
+    let root = temp_fixture_root("triposg-normalizer");
+    let raw_model_dir = root.join("raw");
+    let output_dir = root.join("canonical").join("triposg");
+
+    // Synthetic raw repo: three single-tensor shards (two share a basename)
+    // plus the six config files of the real layout.
+    fs::create_dir_all(&raw_model_dir).expect("raw fixture dir");
+    let write_shard = |relative: &str, key: &str| {
+        let path = raw_model_dir.join(relative);
+        fs::create_dir_all(path.parent().expect("shard parent")).expect("shard dir");
+        let value = 1.0f32.to_le_bytes();
+        let view = safetensors::tensor::TensorView::new(safetensors::Dtype::F32, vec![1], &value)
+            .expect("fixture tensor view");
+        safetensors::serialize_to_file([(key.to_string(), view)], None, &path)
+            .expect("write shard fixture");
+    };
+    write_shard(
+        "transformer/diffusion_pytorch_model.safetensors",
+        "proj_in.weight",
+    );
+    write_shard(
+        "vae/diffusion_pytorch_model.safetensors",
+        "post_quant.weight",
+    );
+    write_shard(
+        "image_encoder_dinov2/model.safetensors",
+        "embeddings.cls_token",
+    );
+    let write_json = |relative: &str, body: &str| {
+        let path = raw_model_dir.join(relative);
+        fs::create_dir_all(path.parent().expect("config parent")).expect("config dir");
+        fs::write(path, body).expect("write config fixture");
+    };
+    write_json("model_index.json", r#"{"_class_name": "TripoSGPipeline"}"#);
+    write_json(
+        "feature_extractor_dinov2/preprocessor_config.json",
+        r#"{"crop_size": 224}"#,
+    );
+    write_json(
+        "image_encoder_dinov2/config.json",
+        r#"{"hidden_size": 1024}"#,
+    );
+    write_json("scheduler/scheduler_config.json", r#"{"shift": 1}"#);
+    write_json("transformer/config.json", r#"{"num_layers": 21}"#);
+    write_json("vae/config.json", r#"{"latent_channels": 64}"#);
+
+    run_python_normalizer(ModelFamily::TripoSg, &raw_model_dir, &output_dir);
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("manifest.json")).expect("read triposg manifest"),
+    )
+    .expect("parse triposg manifest");
+    assert_eq!("triposg", manifest["family"]);
+    // Duplicate basenames are parent-prefixed; unique basenames stay bare.
+    assert_eq!(
+        serde_json::json!([
+            "transformer/diffusion_pytorch_model.safetensors",
+            "vae/diffusion_pytorch_model.safetensors",
+            "model.safetensors",
+            "model_index.json",
+            "preprocessor_config.json",
+            "image_encoder_dinov2/config.json",
+            "scheduler_config.json",
+            "transformer/config.json",
+            "vae/config.json"
+        ]),
+        manifest["raw_files"]
+    );
+    assert_eq!(3, manifest["tensor_count"]);
+    let canonical_bytes =
+        fs::read(output_dir.join("model.safetensors")).expect("read canonical fixture");
+    let tensors =
+        safetensors::SafeTensors::deserialize(&canonical_bytes).expect("deserialize fixture");
+    let mut keys = tensors.names();
+    keys.sort();
+    assert_eq!(
+        vec![
+            "image_encoder.embeddings.cls_token",
+            "transformer.proj_in.weight",
+            "vae.post_quant.weight"
+        ],
+        keys
+    );
+
+    // The locator plan plus the Python-written package must validate together.
+    let locator = WeightLocator::new(raw_model_dir.clone(), output_dir.clone());
+    let plan = locator
+        .locate(ModelFamily::TripoSg)
+        .expect("triposg weights");
+    let canonical = ensure_canonical_weights(&plan).expect("triposg canonical package");
+    assert_eq!(3, canonical.manifest.tensor_count);
+    assert_eq!(9, canonical.manifest.raw_files.len());
+
+    // Second run must hit the idempotency fast path.
+    let manifest_before = fs::read_to_string(output_dir.join("manifest.json")).expect("before");
+    run_python_normalizer(ModelFamily::TripoSg, &raw_model_dir, &output_dir);
+    let manifest_after = fs::read_to_string(output_dir.join("manifest.json")).expect("after");
+    assert_eq!(manifest_before, manifest_after);
+
+    cleanup_dir(&root);
 }
 
 fn run_python_normalizer(family: ModelFamily, raw_model_dir: &Path, output_dir: &PathBuf) {

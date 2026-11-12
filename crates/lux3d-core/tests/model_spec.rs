@@ -6,6 +6,20 @@ use lux3d_core::{
     Pi3InputSource, PreprocessSpec, RgbRange, RuntimeGeometry, SourceDisposition, TensorDType,
 };
 
+fn triposg_raw_relative_files() -> [&'static str; 9] {
+    [
+        "transformer/diffusion_pytorch_model.safetensors",
+        "vae/diffusion_pytorch_model.safetensors",
+        "image_encoder_dinov2/model.safetensors",
+        "model_index.json",
+        "feature_extractor_dinov2/preprocessor_config.json",
+        "image_encoder_dinov2/config.json",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "vae/config.json",
+    ]
+}
+
 fn assert_path_free_weight_plan(
     spec: &ModelSpec,
     family: ModelFamily,
@@ -379,11 +393,116 @@ fn vggt_model_spec_is_source_truth_backed() {
 }
 
 #[test]
+fn triposg_model_spec_is_source_truth_backed() {
+    let spec =
+        ModelSpec::inspect(runtime_root(), ModelFamily::TripoSg).expect("triposg model spec");
+
+    match &spec.preprocess {
+        PreprocessSpec::TripoSg(preprocess) => {
+            assert_eq!("NCHW", preprocess.input_layout);
+            assert_eq!("NCHW", preprocess.tokenizer_input_layout);
+            assert_eq!(224, preprocess.target_size.width);
+            assert_eq!(224, preprocess.target_size.height);
+            assert_eq!(1.0, preprocess.background_value);
+            assert_eq!(0.1, preprocess.foreground_padding_ratio);
+            assert!(preprocess.optional_rgba_compositing);
+            assert_eq!([0.485, 0.456, 0.406], preprocess.normalization.mean);
+            assert_eq!([0.229, 0.224, 0.225], preprocess.normalization.std);
+            assert_eq!("BriaRMBG 1.4 (IS-Net/BriaRMBG)", preprocess.rmbg.model);
+            assert_eq!("rmbg-1.4", preprocess.rmbg.canonical_root);
+            assert_eq!([1024, 1024], preprocess.rmbg.input_size);
+            assert_eq!([0.5, 0.5, 0.5], preprocess.rmbg.normalization.mean);
+            assert_eq!([1.0, 1.0, 1.0], preprocess.rmbg.normalization.std);
+            assert!(preprocess.rmbg.license.contains("BRIA"));
+        }
+        other => panic!("expected TripoSG preprocess spec, got {other:?}"),
+    }
+
+    match &spec.neural {
+        NeuralSpec::TripoSg(neural) => {
+            assert_eq!("facebook/dinov2-large", neural.image_encoder);
+            assert_eq!(24, neural.image_encoder_layers);
+            assert_eq!(1024, neural.image_encoder_hidden);
+            assert_eq!(14, neural.image_encoder_patch_size);
+            assert_eq!(257, neural.image_embeds_tokens);
+            assert_eq!(21, neural.dit_layers);
+            assert_eq!(2048, neural.dit_width);
+            assert_eq!(16, neural.dit_heads);
+            assert_eq!(1024, neural.cross_attention_dim);
+            assert_eq!(2048, neural.latent_tokens);
+            assert_eq!(64, neural.latent_channels);
+            assert_eq!("RectifiedFlowScheduler", neural.scheduler);
+            assert_eq!(50, neural.default_steps);
+            assert_eq!(7.0, neural.default_guidance_scale);
+            assert_eq!(16, neural.vae_decoder_layers);
+            assert_eq!(1024, neural.vae_decoder_width);
+            assert_eq!(8, neural.vae_embed_frequency);
+        }
+        other => panic!("expected TripoSG neural spec, got {other:?}"),
+    }
+
+    match &spec.geometry {
+        GeometrySpec::TripoSg(geometry) => {
+            assert_eq!("mesh", geometry.artifact_kind);
+            assert_eq!("flash_diffdmc", geometry.surface_extractor);
+            assert_eq!(8, geometry.default_dense_octree_depth);
+            assert_eq!(9, geometry.default_hierarchical_octree_depth);
+            assert!(geometry.default_use_flash_decoder);
+            assert_eq!(9, geometry.default_flash_octree_depth);
+            assert_eq!(0.0, geometry.sdf_level);
+            assert_eq!(
+                [-1.005, -1.005, -1.005, 1.005, 1.005, 1.005],
+                geometry.bounds
+            );
+        }
+        other => panic!("expected TripoSG geometry spec, got {other:?}"),
+    }
+
+    match &spec.export {
+        ExportSpec::TripoSg(export) => {
+            assert_eq!("obj", export.primary_extension);
+            assert!(export.alternate_extensions.is_empty());
+            assert!(
+                export
+                    .utility_notes
+                    .iter()
+                    .any(|note| note.contains("1-based indices")),
+                "export notes must document the 1-based face indices"
+            );
+        }
+        other => panic!("expected TripoSG export spec, got {other:?}"),
+    }
+
+    assert_eq!(
+        FutureWeightLoader::CandleMmapSafetensors,
+        spec.weight_plan.future_loader
+    );
+    assert_path_free_weight_plan(&spec, ModelFamily::TripoSg, &triposg_raw_relative_files());
+    assert_eq!("mesh-input-golden", spec.golden_baseline_sample);
+
+    assert!(
+        spec.exclusions.is_empty(),
+        "TripoSG contract must not exclude reference features: {:?}",
+        spec.exclusions
+    );
+
+    assert_eq!("MIT", spec.license_policy.repo_license);
+    assert!(spec.license_policy.weight_license.contains("MIT"));
+    for source_path in spec.used_source_paths().iter() {
+        assert!(
+            spec.license_policy.covers_source(source_path),
+            "missing license classification for {source_path}"
+        );
+    }
+}
+
+#[test]
 fn license_policy_covers_every_used_source_file() {
     for family in [
         ModelFamily::Pi3,
         ModelFamily::Pi3x,
         ModelFamily::TripoSr,
+        ModelFamily::TripoSg,
         ModelFamily::Vggt,
     ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
@@ -403,6 +522,7 @@ fn vendor_sources_have_fingerprints_and_license_entries() {
         ModelFamily::Pi3,
         ModelFamily::Pi3x,
         ModelFamily::TripoSr,
+        ModelFamily::TripoSg,
         ModelFamily::Vggt,
     ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");

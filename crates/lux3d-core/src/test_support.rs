@@ -93,6 +93,7 @@ pub fn raw_model_dir_env_var(family: ModelFamily) -> &'static str {
         ModelFamily::Pi3 => "LUX3D_PI3_RAW_MODEL_DIR",
         ModelFamily::Pi3x => "LUX3D_PI3X_RAW_MODEL_DIR",
         ModelFamily::TripoSr => "LUX3D_TRIPOSR_RAW_MODEL_DIR",
+        ModelFamily::TripoSg => "LUX3D_TRIPOSG_RAW_MODEL_DIR",
         ModelFamily::Vggt => "LUX3D_VGGT_RAW_MODEL_DIR",
     }
 }
@@ -186,6 +187,18 @@ fn download_raw_model_dir_for_tests(family: ModelFamily) -> anyhow::Result<PathB
             )
         })?;
         let target = raw_dir.join(filename);
+        // Required raw filenames may be nested (e.g. TripoSG
+        // `transformer/diffusion_pytorch_model.safetensors`); create the
+        // parent directories before copying.
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create parent directory {} for raw model asset {}",
+                    parent.display(),
+                    filename
+                )
+            })?;
+        }
         fs::copy(&fetched, &target).with_context(|| {
             format!(
                 "failed to copy downloaded raw model asset {} to {}",
@@ -204,6 +217,7 @@ fn official_raw_model_repo_id(family: ModelFamily) -> &'static str {
         ModelFamily::Pi3 => "yyfz233/Pi3",
         ModelFamily::Pi3x => "yyfz233/Pi3X",
         ModelFamily::TripoSr => "stabilityai/TripoSR",
+        ModelFamily::TripoSg => "VAST-AI/TripoSG",
         ModelFamily::Vggt => "facebook/VGGT-1B",
     }
 }
@@ -213,6 +227,17 @@ fn raw_model_required_files(family: ModelFamily) -> &'static [&'static str] {
         ModelFamily::Pi3 => &["model.safetensors", "config.json"],
         ModelFamily::Pi3x => &["model.safetensors", "config.json"],
         ModelFamily::TripoSr => &["model.ckpt", "config.yaml"],
+        ModelFamily::TripoSg => &[
+            "transformer/diffusion_pytorch_model.safetensors",
+            "vae/diffusion_pytorch_model.safetensors",
+            "image_encoder_dinov2/model.safetensors",
+            "model_index.json",
+            "feature_extractor_dinov2/preprocessor_config.json",
+            "image_encoder_dinov2/config.json",
+            "scheduler/scheduler_config.json",
+            "transformer/config.json",
+            "vae/config.json",
+        ],
         ModelFamily::Vggt => &["model.safetensors", "config.json"],
     }
 }
