@@ -1,5 +1,7 @@
 use clap::Parser;
-use lux3d_cli::{Cli, Command, WeightsCommand, inspect_model, normalize_weights, run_model};
+use lux3d_cli::{
+    Cli, Command, WeightsCommand, inspect_model, normalize_weights, quantize_weights, run_model,
+};
 
 fn main() -> anyhow::Result<()> {
     lux3d_core::enable_reduced_precision_gemm_opt_ins();
@@ -19,6 +21,7 @@ fn main() -> anyhow::Result<()> {
                 )?;
                 println!("{rendered}");
             }
+            WeightsCommand::Quantize(args) => println!("{}", quantize_weights(args)?),
         },
         Command::Run(args) => println!("{}", run_model(args)?.display()),
     }

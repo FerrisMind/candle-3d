@@ -2,14 +2,18 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 use lux3d_core::runtime::{
-    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSrPipeline, VggtPipeline,
+    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSgPipeline,
+    TripoSgRunOptions, TripoSrPipeline, VggtPipeline,
 };
-use lux3d_core::{ModelAssetOptions, ModelFamily, WeightLocator, ensure_canonical_weights};
+use lux3d_core::{
+    ModelAssetOptions, ModelFamily, QuantizeOptions, WeightLocator, dtype_from_name,
+    ensure_canonical_weights, quantize_auxiliary_checkpoint, quantize_checkpoint,
+};
 
 #[derive(Debug, Parser, PartialEq)]
 #[command(
     name = "lux3d",
-    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, TripoSR, and VGGT."
+    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, TripoSR, VGGT, and TripoSG."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -41,6 +45,59 @@ pub struct WeightsArgs {
 #[derive(Debug, Clone, Subcommand, PartialEq, Eq)]
 pub enum WeightsCommand {
     Normalize(NormalizeArgs),
+    Quantize(QuantizeArgs),
+}
+
+#[derive(Debug, Clone, Args, PartialEq, Eq)]
+pub struct QuantizeArgs {
+    #[arg(
+        value_enum,
+        required_unless_present = "aux_family",
+        help = "Output model family (triposg, vggt, ...); omit when using `--aux-family`."
+    )]
+    pub family: Option<Family>,
+
+    #[arg(
+        long,
+        conflicts_with = "family",
+        help = "Auxiliary package family label, e.g. `rmbg`; makes FAMILY optional."
+    )]
+    pub aux_family: Option<String>,
+
+    #[arg(long, help = "Input canonical safetensors (`model.safetensors`).")]
+    pub source: PathBuf,
+
+    #[arg(
+        long,
+        help = "Output GGUF path; use the package's `model.gguf` name for auto-detection."
+    )]
+    pub output: PathBuf,
+
+    #[arg(
+        long,
+        default_value = "q8_0",
+        help = "Quantization dtype for 2D linear weights (f16, q8_0, q4_0, q4_k, q5_k, q6_k, ...)."
+    )]
+    pub dtype: String,
+
+    #[arg(
+        long,
+        default_value = "f16",
+        help = "Dtype for norms, biases, embeddings, convolutions, and non-divisible weights."
+    )]
+    pub fallback_dtype: String,
+
+    #[arg(
+        long,
+        help = "Quantize every rank-2 tensor instead of only names ending in `.weight`."
+    )]
+    pub all_2d: bool,
+
+    #[arg(
+        long,
+        help = "Only quantize tensors whose name starts with this prefix (repeatable)."
+    )]
+    pub prefix: Vec<String>,
 }
 
 #[derive(Debug, Clone, Args, PartialEq, Eq)]
@@ -99,11 +156,52 @@ pub struct RunArgs {
     #[arg(long)]
     pub mc_threshold: Option<f32>,
 
+    #[arg(long, help = "TripoSG rectified-flow denoise steps (default 50).")]
+    pub steps: Option<usize>,
+
+    #[arg(long, help = "TripoSG classifier-free guidance scale (default 7.0).")]
+    pub guidance_scale: Option<f32>,
+
+    #[arg(long, help = "TripoSG latent-initialization seed (default 42).")]
+    pub seed: Option<u64>,
+
+    #[arg(long, help = "TripoSG latent token count (default 2048).")]
+    pub num_tokens: Option<usize>,
+
     #[arg(
         long,
-        help = "Path to a canonical package directory laid out like 3d/canonical-weights/<family>."
+        help = "TripoSG dense octree depth of the hierarchical SDF grid (default 8)."
+    )]
+    pub dense_octree_depth: Option<u32>,
+
+    #[arg(long, help = "TripoSG final hierarchical octree depth (default 9).")]
+    pub hierarchical_octree_depth: Option<u32>,
+
+    #[arg(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        help = "TripoSG flash decoder + DiffDMC path (reference default: true). Pass --flash-decoder false to use dense/hierarchical marching cubes."
+    )]
+    pub flash_decoder: Option<bool>,
+
+    #[arg(
+        long,
+        help = "TripoSG flash octree depth used by the reference default flash path (default 9)."
+    )]
+    pub flash_octree_depth: Option<u32>,
+
+    #[arg(
+        long,
+        help = "Path to a canonical package directory, a directory containing `model.gguf`, or a standalone `.gguf` file."
     )]
     pub model_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        help = "Path to the separate RMBG-1.4 package directory or its `.gguf` file (required for inputs without a valid alpha channel)."
+    )]
+    pub rmbg_model_path: Option<PathBuf>,
 
     #[arg(
         long,
@@ -113,6 +211,12 @@ pub struct RunArgs {
 
     #[arg(long)]
     pub output: PathBuf,
+
+    #[arg(
+        long,
+        help = "Dump raw inference tensors (.npz) for quantization-fidelity metrics (vggt only)."
+    )]
+    pub dump_npz: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
@@ -120,6 +224,7 @@ pub enum Family {
     Pi3,
     Pi3x,
     Triposr,
+    Triposg,
     Vggt,
 }
 
@@ -242,18 +347,20 @@ impl Family {
             Self::Pi3 => ModelFamily::Pi3,
             Self::Pi3x => ModelFamily::Pi3x,
             Self::Triposr => ModelFamily::TripoSr,
+            Self::Triposg => ModelFamily::TripoSg,
             Self::Vggt => ModelFamily::Vggt,
         }
     }
 }
 
 impl Command {
-    pub const fn family_name(&self) -> &'static str {
+    pub fn family_name(&self) -> &str {
         match self {
             Self::Inspect(args) => match args.family {
                 Family::Pi3 => "pi3",
                 Family::Pi3x => "pi3x",
                 Family::Triposr => "triposr",
+                Family::Triposg => "triposg",
                 Family::Vggt => "vggt",
             },
             Self::Weights(args) => match args.command {
@@ -261,25 +368,41 @@ impl Command {
                     Family::Pi3 => "pi3",
                     Family::Pi3x => "pi3x",
                     Family::Triposr => "triposr",
+                    Family::Triposg => "triposg",
                     Family::Vggt => "vggt",
                 },
+                WeightsCommand::Quantize(ref args) => {
+                    if let Some(aux) = args.aux_family.as_deref() {
+                        return aux;
+                    }
+                    match args.family {
+                        Some(Family::Pi3) => "pi3",
+                        Some(Family::Pi3x) => "pi3x",
+                        Some(Family::Triposr) => "triposr",
+                        Some(Family::Triposg) => "triposg",
+                        Some(Family::Vggt) => "vggt",
+                        None => "aux",
+                    }
+                }
             },
             Self::Run(args) => match args.family {
                 Family::Pi3 => "pi3",
                 Family::Pi3x => "pi3x",
                 Family::Triposr => "triposr",
+                Family::Triposg => "triposg",
                 Family::Vggt => "vggt",
             },
         }
     }
 
-    pub const fn family(&self) -> ModelFamily {
+    pub fn family(&self) -> Option<ModelFamily> {
         match self {
-            Self::Inspect(args) => args.family.model_family(),
+            Self::Inspect(args) => Some(args.family.model_family()),
             Self::Weights(args) => match args.command {
-                WeightsCommand::Normalize(ref family) => family.family.model_family(),
+                WeightsCommand::Normalize(ref family) => Some(family.family.model_family()),
+                WeightsCommand::Quantize(ref args) => args.family.map(Family::model_family),
             },
-            Self::Run(args) => args.family.model_family(),
+            Self::Run(args) => Some(args.family.model_family()),
         }
     }
 
@@ -288,6 +411,7 @@ impl Command {
             Self::Inspect(args) => Some(&args.repo_root),
             Self::Weights(args) => match &args.command {
                 WeightsCommand::Normalize(family) => Some(&family.repo_root),
+                WeightsCommand::Quantize(_) => None,
             },
             Self::Run(_) => None,
         }
@@ -297,6 +421,46 @@ impl Command {
 pub fn inspect_model(repo_root: PathBuf, family: ModelFamily) -> anyhow::Result<String> {
     let spec = lux3d_core::ModelSpec::inspect(repo_root, family)?;
     Ok(serde_json::to_string_pretty(&spec)?)
+}
+
+pub fn quantize_weights(args: QuantizeArgs) -> anyhow::Result<String> {
+    let dtype = dtype_from_name(&args.dtype)
+        .ok_or_else(|| anyhow::anyhow!("unknown quantization dtype `{}`", args.dtype))?;
+    let fallback = dtype_from_name(&args.fallback_dtype).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown fallback quantization dtype `{}`",
+            args.fallback_dtype
+        )
+    })?;
+    let report = if let Some(aux_family) = args.aux_family.as_deref() {
+        quantize_auxiliary_checkpoint(
+            &args.source,
+            &args.output,
+            aux_family,
+            QuantizeOptions {
+                dtype,
+                fallback,
+                all_2d: args.all_2d,
+                prefixes: args.prefix.clone(),
+            },
+        )?
+    } else {
+        let family = args
+            .family
+            .ok_or_else(|| anyhow::anyhow!("FAMILY is required unless `--aux-family` is used"))?;
+        quantize_checkpoint(
+            &args.source,
+            &args.output,
+            family.model_family(),
+            QuantizeOptions {
+                dtype,
+                fallback,
+                all_2d: args.all_2d,
+                prefixes: args.prefix.clone(),
+            },
+        )?
+    };
+    Ok(report.render())
 }
 
 pub fn normalize_weights(
@@ -355,43 +519,71 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
         std::fs::create_dir_all(parent)?;
     }
 
+    if args.family.model_family() != ModelFamily::Vggt && args.dump_npz.is_some() {
+        anyhow::bail!("`--dump-npz` is only supported for `vggt`");
+    }
+
     match args.family.model_family() {
-        ModelFamily::Pi3 => run_pi3(
-            model_assets,
-            &args.source,
-            args.interval,
-            &args.output,
-            &device,
-        )?,
-        ModelFamily::Pi3x => run_pi3x(
-            model_assets,
-            &args.source,
-            args.conditions.as_deref(),
-            args.interval,
-            args.vo,
-            args.chunk_size,
-            args.overlap,
-            args.conf_threshold,
-            &args.inject_condition,
-            &args.output,
-            &device,
-        )?,
-        ModelFamily::TripoSr => run_triposr(
-            model_assets,
-            &args.source,
-            args.mc_resolution.unwrap_or(256),
-            args.mc_threshold.unwrap_or(25.0),
-            &args.output,
-            &device,
-        )?,
+        ModelFamily::Pi3 => {
+            reject_triposg_only_options(&args, args.family)?;
+            run_pi3(
+                model_assets,
+                &args.source,
+                args.interval,
+                &args.output,
+                &device,
+            )?
+        }
+        ModelFamily::Pi3x => {
+            reject_triposg_only_options(&args, args.family)?;
+            run_pi3x(
+                model_assets,
+                &args.source,
+                args.conditions.as_deref(),
+                args.interval,
+                args.vo,
+                args.chunk_size,
+                args.overlap,
+                args.conf_threshold,
+                &args.inject_condition,
+                &args.output,
+                &device,
+            )?
+        }
+        ModelFamily::TripoSr => {
+            reject_triposg_only_options(&args, args.family)?;
+            run_triposr(
+                model_assets,
+                &args.source,
+                args.mc_resolution.unwrap_or(256),
+                args.mc_threshold.unwrap_or(25.0),
+                &args.output,
+                &device,
+            )?
+        }
+        ModelFamily::TripoSg => {
+            reject_unsupported_triposg_options(&args)?;
+            let options = triposg_run_options_from_args(&args)?;
+            let rmbg_model_path = resolve_rmbg_model_path(&args);
+            run_triposg(
+                model_assets,
+                rmbg_model_path,
+                &args.source,
+                options,
+                &args.output,
+                &device,
+            )?
+        }
         ModelFamily::Vggt => {
             reject_unsupported_vggt_options(&args)?;
+            reject_triposg_only_options(&args, args.family)?;
             run_vggt(
                 model_assets,
                 &args.source,
                 args.interval,
                 args.conf_threshold,
                 &args.output,
+                args.dump_npz.as_deref(),
                 &device,
             )?
         }
@@ -514,12 +706,135 @@ fn reject_unsupported_vggt_options(args: &RunArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// TripoSG exposes image-to-mesh diffusion only. Reject the Pi3/Pi3X/VGGT
+/// conditioning and point-cloud options plus the TripoSR marching-cubes knobs
+/// instead of silently ignoring them. `--chunk-size` stays allowed: it feeds
+/// the TripoSG SDF query chunk.
+fn reject_unsupported_triposg_options(args: &RunArgs) -> anyhow::Result<()> {
+    if args.interval.is_some() {
+        anyhow::bail!("`--interval` is not supported for `triposg`");
+    }
+    if args.conditions.is_some() {
+        anyhow::bail!("`--conditions` is not supported for `triposg`");
+    }
+    if args.vo {
+        anyhow::bail!("`--vo` is not supported for `triposg`");
+    }
+    if args.overlap.is_some() {
+        anyhow::bail!("`--overlap` is not supported for `triposg`");
+    }
+    if args.conf_threshold.is_some() {
+        anyhow::bail!("`--conf-threshold` is not supported for `triposg`");
+    }
+    if !args.inject_condition.is_empty() {
+        anyhow::bail!("`--inject-condition` is not supported for `triposg`");
+    }
+    if args.mc_resolution.is_some() {
+        anyhow::bail!("`--mc-resolution` is not supported for `triposg`");
+    }
+    if args.mc_threshold.is_some() {
+        anyhow::bail!("`--mc-threshold` is not supported for `triposg`");
+    }
+    Ok(())
+}
+
+/// The `--steps`/`--guidance-scale`/`--seed`/`--num-tokens`/`--dense-octree-depth`/
+/// `--hierarchical-octree-depth` flags are TripoSG-only; every other family must
+/// reject them instead of silently ignoring them.
+fn reject_triposg_only_options(args: &RunArgs, family: Family) -> anyhow::Result<()> {
+    if args.steps.is_some() {
+        anyhow::bail!("`--steps` is not supported for `{}`", family.model_family());
+    }
+    if args.guidance_scale.is_some() {
+        anyhow::bail!(
+            "`--guidance-scale` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    if args.seed.is_some() {
+        anyhow::bail!("`--seed` is not supported for `{}`", family.model_family());
+    }
+    if args.num_tokens.is_some() {
+        anyhow::bail!(
+            "`--num-tokens` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    if args.dense_octree_depth.is_some() {
+        anyhow::bail!(
+            "`--dense-octree-depth` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    if args.hierarchical_octree_depth.is_some() {
+        anyhow::bail!(
+            "`--hierarchical-octree-depth` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    if args.flash_decoder.is_some() {
+        anyhow::bail!(
+            "`--flash-decoder` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    if args.flash_octree_depth.is_some() {
+        anyhow::bail!(
+            "`--flash-octree-depth` is not supported for `{}`",
+            family.model_family()
+        );
+    }
+    Ok(())
+}
+
+/// Resolve the RMBG package: explicit `--rmbg-model-path` wins, otherwise a
+/// sibling `rmbg-1.4` canonical directory next to an explicit TripoSG
+/// `--model-path` is used when present. (The canonical directories are
+/// distributed separately because the BRIA license differs from TripoSG's
+/// MIT license.)
+fn resolve_rmbg_model_path(args: &RunArgs) -> Option<PathBuf> {
+    if args.rmbg_model_path.is_some() {
+        return args.rmbg_model_path.clone();
+    }
+    args.model_path
+        .as_ref()
+        .and_then(|path| path.parent())
+        .map(|parent| parent.join("rmbg-1.4"))
+        .filter(|candidate| candidate.is_dir())
+}
+
+/// Build the TripoSG run options from the reference defaults plus explicit
+/// CLI overrides; `--chunk-size` doubles as the SDF query chunk.
+fn triposg_run_options_from_args(args: &RunArgs) -> anyhow::Result<TripoSgRunOptions> {
+    let defaults = TripoSgRunOptions::default();
+    let options = TripoSgRunOptions {
+        steps: args.steps.unwrap_or(defaults.steps),
+        guidance_scale: args.guidance_scale.unwrap_or(defaults.guidance_scale),
+        seed: args.seed.unwrap_or(defaults.seed),
+        num_tokens: args.num_tokens.unwrap_or(defaults.num_tokens),
+        dense_octree_depth: args
+            .dense_octree_depth
+            .unwrap_or(defaults.dense_octree_depth),
+        hierarchical_octree_depth: args
+            .hierarchical_octree_depth
+            .unwrap_or(defaults.hierarchical_octree_depth),
+        use_flash_decoder: args.flash_decoder.unwrap_or(defaults.use_flash_decoder),
+        flash_octree_depth: args
+            .flash_octree_depth
+            .unwrap_or(defaults.flash_octree_depth),
+        query_chunk_size: args.chunk_size.unwrap_or(defaults.query_chunk_size),
+    };
+    options.validate().map_err(anyhow::Error::from)?;
+    Ok(options)
+}
+
 fn run_vggt(
     model_assets: ModelAssetOptions,
     source: &Path,
     interval: Option<usize>,
     conf_threshold: Option<f32>,
     output: &Path,
+    dump_npz: Option<&Path>,
     device: &candle_core::Device,
 ) -> anyhow::Result<()> {
     let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
@@ -534,6 +849,11 @@ fn run_vggt(
         eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
     }
     let t2 = std::time::Instant::now();
+    if let Some(npz_path) = dump_npz {
+        pipeline
+            .export_inference_npz(&inference, npz_path)
+            .map_err(anyhow::Error::from)?;
+    }
     pipeline.export_ply_with_threshold(&inference, output, conf_threshold.unwrap_or(1.0))?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
@@ -633,6 +953,39 @@ fn run_triposr(
     }
     let t2 = std::time::Instant::now();
     let mesh = pipeline.extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)?;
+    if stage_time {
+        eprintln!("[stage] mesh: {:.2}s", t2.elapsed().as_secs_f64());
+    }
+    let t3 = std::time::Instant::now();
+    pipeline.export_obj(&mesh, output)?;
+    if stage_time {
+        eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());
+    }
+    Ok(())
+}
+
+fn run_triposg(
+    model_assets: ModelAssetOptions,
+    rmbg_model_path: Option<PathBuf>,
+    source: &Path,
+    options: TripoSgRunOptions,
+    output: &Path,
+    device: &candle_core::Device,
+) -> anyhow::Result<()> {
+    options.validate().map_err(anyhow::Error::from)?;
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+    let t0 = std::time::Instant::now();
+    let pipeline = TripoSgPipeline::load_with_rmbg(model_assets, rmbg_model_path)?;
+    if stage_time {
+        eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+    }
+    let t1 = std::time::Instant::now();
+    let inference = pipeline.infer_from_path(source, device, &options)?;
+    if stage_time {
+        eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+    }
+    let t2 = std::time::Instant::now();
+    let mesh = pipeline.extract_mesh(&inference.latents, &options)?;
     if stage_time {
         eprintln!("[stage] mesh: {:.2}s", t2.elapsed().as_secs_f64());
     }
@@ -798,6 +1151,189 @@ mod tests {
         let error = super::reject_unsupported_vggt_options(&args)
             .expect_err("--vo must be rejected for vggt");
         assert!(error.to_string().contains("--vo"));
+    }
+
+    #[test]
+    fn routes_run_triposg_family_with_reference_defaults() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "triposg",
+            "--source",
+            "image.png",
+            "--output",
+            "out.obj",
+        ]);
+        assert_eq!("triposg", cli.command.family_name());
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(ModelFamily::TripoSg, args.family.model_family());
+        super::reject_unsupported_triposg_options(&args).expect("default triposg options");
+        let options = super::triposg_run_options_from_args(&args).expect("default run options");
+        assert_eq!(super::TripoSgRunOptions::default(), options);
+        let defaults = super::TripoSgRunOptions::default();
+        assert_eq!(
+            (
+                50usize, 7.0f32, 42u64, 2048usize, 8u32, 9u32, true, 9u32, 16384usize
+            ),
+            (
+                defaults.steps,
+                defaults.guidance_scale,
+                defaults.seed,
+                defaults.num_tokens,
+                defaults.dense_octree_depth,
+                defaults.hierarchical_octree_depth,
+                defaults.use_flash_decoder,
+                defaults.flash_octree_depth,
+                defaults.query_chunk_size
+            )
+        );
+    }
+
+    #[test]
+    fn triposg_run_options_map_cli_overrides() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "triposg",
+            "--source",
+            "image.png",
+            "--output",
+            "out.obj",
+            "--steps",
+            "12",
+            "--guidance-scale",
+            "3.5",
+            "--seed",
+            "7",
+            "--num-tokens",
+            "1024",
+            "--dense-octree-depth",
+            "5",
+            "--hierarchical-octree-depth",
+            "6",
+            "--flash-decoder",
+            "false",
+            "--flash-octree-depth",
+            "7",
+            "--chunk-size",
+            "4096",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        let options = super::triposg_run_options_from_args(&args).expect("run options");
+        assert_eq!(12, options.steps);
+        assert_eq!(3.5, options.guidance_scale);
+        assert_eq!(7, options.seed);
+        assert_eq!(1024, options.num_tokens);
+        assert_eq!(5, options.dense_octree_depth);
+        assert_eq!(6, options.hierarchical_octree_depth);
+        assert!(!options.use_flash_decoder);
+        assert_eq!(7, options.flash_octree_depth);
+        assert_eq!(4096, options.query_chunk_size);
+    }
+
+    #[test]
+    fn run_triposg_rejects_foreign_family_options() {
+        let flag_options: [(&str, &[&str]); 8] = [
+            ("--interval", &["--interval", "2"]),
+            ("--conditions", &["--conditions", "conditions.npz"]),
+            ("--vo", &["--vo"]),
+            ("--overlap", &["--overlap", "4"]),
+            ("--conf-threshold", &["--conf-threshold", "0.5"]),
+            ("--inject-condition", &["--inject-condition", "pose"]),
+            ("--mc-resolution", &["--mc-resolution", "256"]),
+            ("--mc-threshold", &["--mc-threshold", "25.0"]),
+        ];
+        for (flag, extra) in flag_options {
+            let mut argv = vec![
+                "lux3d",
+                "run",
+                "triposg",
+                "--source",
+                "image.png",
+                "--output",
+                "out.obj",
+            ];
+            argv.extend_from_slice(extra);
+            let cli = Cli::parse_from(argv);
+            let Command::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+            let error = super::reject_unsupported_triposg_options(&args)
+                .expect_err(&format!("{flag} must be rejected for triposg"));
+            let message = error.to_string();
+            assert!(
+                message.contains("is not supported for `triposg`"),
+                "unexpected message for {flag}: `{message}`"
+            );
+            assert!(message.contains(flag), "`{flag}` missing in `{message}`");
+        }
+    }
+
+    #[test]
+    fn triposg_only_steps_rejected_for_other_families() {
+        for family in ["pi3", "pi3x", "triposr", "vggt"] {
+            let cli = Cli::parse_from([
+                "lux3d", "run", family, "--source", "input", "--steps", "10", "--output", "out",
+            ]);
+            let Command::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+            let error = super::reject_triposg_only_options(&args, args.family)
+                .expect_err(&format!("--steps must be rejected for {family}"));
+            let message = error.to_string();
+            assert!(
+                message.contains("--steps"),
+                "`--steps` missing in `{message}`"
+            );
+            assert!(
+                message.contains(&format!("is not supported for `{family}`")),
+                "unexpected message: `{message}`"
+            );
+        }
+    }
+
+    #[test]
+    fn all_triposg_only_flags_rejected_for_triposr() {
+        let flag_options: [&[&str]; 6] = [
+            &["--steps", "10"],
+            &["--guidance-scale", "7.0"],
+            &["--seed", "1"],
+            &["--num-tokens", "1024"],
+            &["--dense-octree-depth", "5"],
+            &["--hierarchical-octree-depth", "6"],
+        ];
+        for extra in flag_options {
+            let mut argv = vec![
+                "lux3d",
+                "run",
+                "triposr",
+                "--source",
+                "horse.png",
+                "--output",
+                "out.obj",
+            ];
+            argv.extend_from_slice(extra);
+            let cli = Cli::parse_from(argv);
+            let Command::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+            let error = super::reject_triposg_only_options(&args, args.family)
+                .expect_err(&format!("{} must be rejected for triposr", extra[0]));
+            let message = error.to_string();
+            assert!(
+                message.contains("is not supported for `triposr`"),
+                "unexpected message: `{message}`"
+            );
+            assert!(
+                message.contains(extra[0]),
+                "`{}` missing in `{message}`",
+                extra[0]
+            );
+        }
     }
 
     #[test]
@@ -1062,9 +1598,19 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: None,
             mc_threshold: None,
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            flash_decoder: None,
+            flash_octree_depth: None,
             model_path: Some(canonical_package_dir(ModelFamily::Pi3)),
+            rmbg_model_path: None,
             cache_dir: None,
             output: output.clone(),
+            dump_npz: None,
         };
 
         let emitted = run_model(args).expect("pi3 cli run");
@@ -1098,9 +1644,19 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: Some(256),
             mc_threshold: Some(25.0),
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            flash_decoder: None,
+            flash_octree_depth: None,
             model_path: Some(canonical_package_dir(ModelFamily::TripoSr)),
+            rmbg_model_path: None,
             cache_dir: None,
             output: output.clone(),
+            dump_npz: None,
         };
 
         let emitted = run_model(args).expect("triposr cli run");
@@ -1136,9 +1692,19 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: Some(1),
             mc_threshold: Some(25.0),
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            flash_decoder: None,
+            flash_octree_depth: None,
             model_path: Some(canonical_package_dir(ModelFamily::TripoSr)),
+            rmbg_model_path: None,
             cache_dir: None,
             output,
+            dump_npz: None,
         };
 
         let err = run_model(args).expect_err("invalid marching-cubes resolution must fail");
@@ -1180,9 +1746,19 @@ mod tests {
             inject_condition: Vec::new(),
             mc_resolution: None,
             mc_threshold: None,
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            flash_decoder: None,
+            flash_octree_depth: None,
             model_path: Some(canonical_package_dir(ModelFamily::Pi3x)),
+            rmbg_model_path: None,
             cache_dir: None,
             output: output.clone(),
+            dump_npz: None,
         };
 
         let emitted = run_model(args).expect("pi3x cli run");
@@ -1220,9 +1796,19 @@ mod tests {
             ],
             mc_resolution: None,
             mc_threshold: None,
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            flash_decoder: None,
+            flash_octree_depth: None,
             model_path: Some(canonical_package_dir(ModelFamily::Pi3x)),
+            rmbg_model_path: None,
             cache_dir: None,
             output: output.clone(),
+            dump_npz: None,
         };
 
         let emitted = run_model(args).expect("pi3x vo cli run");
