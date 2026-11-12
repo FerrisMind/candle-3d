@@ -85,6 +85,7 @@ pub async fn models(State(state): ExtractedLux3dState) -> Json<ModelListResponse
             model_entry(&state, "pi3x", "point_cloud", "ply"),
             model_entry(&state, "vggt", "point_cloud", "ply"),
             model_entry(&state, "triposr", "mesh", "obj"),
+            model_entry(&state, "triposg", "mesh", "obj"),
         ],
     })
 }
@@ -430,6 +431,16 @@ async fn create_point_cloud_generation_json(
     spawn_point_cloud_generation(state, record, source, conditions, request.options).await
 }
 
+/// Download name for mesh jobs: TripoSG exports `triposg.obj`, while the
+/// historical triposr default keeps its `mesh.obj` name for old clients.
+fn mesh_download_filename(model: &str) -> String {
+    if model == "triposg" {
+        "triposg.obj".to_string()
+    } else {
+        "mesh.obj".to_string()
+    }
+}
+
 async fn create_mesh_generation_multipart(
     state: std::sync::Arc<crate::types::Lux3dState>,
     multipart: axum::extract::Multipart,
@@ -438,7 +449,10 @@ async fn create_mesh_generation_multipart(
     let workspace = job_workspace(&state.upload_dir, &job_id);
     let (upload, options): (_, MeshGenerationOptions) =
         parse_generation_upload(multipart, &workspace).await?;
+    // Missing `model` keeps the documented `triposr` default; the download
+    // name follows the requested model.
     let model = upload.model.unwrap_or_else(|| "triposr".to_string());
+    let download_filename = mesh_download_filename(&model);
 
     let record = create_job_record(NewJobRecord {
         job_id,
@@ -446,7 +460,7 @@ async fn create_mesh_generation_multipart(
         output_format: "obj".to_string(),
         workspace,
         content_type: "model/obj".to_string(),
-        download_filename: "mesh.obj".to_string(),
+        download_filename,
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: None,
     });
@@ -473,13 +487,15 @@ async fn create_mesh_generation_json(
     )
     .await?;
 
+    let download_filename = mesh_download_filename(&request.model);
+
     let record = create_job_record(NewJobRecord {
         job_id,
         model: request.model,
         output_format: "obj".to_string(),
         workspace,
         content_type: "model/obj".to_string(),
-        download_filename: "mesh.obj".to_string(),
+        download_filename,
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: request.webhook_url,
     });

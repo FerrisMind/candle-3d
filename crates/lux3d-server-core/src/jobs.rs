@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use lux3d_core::runtime::Pi3xInjectConditions;
+use lux3d_core::runtime::{Pi3xInjectConditions, TripoSgRunOptions};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -438,6 +438,80 @@ pub async fn spawn_point_cloud_generation(
     Ok(response)
 }
 
+/// Build the TripoSG run options from the reference defaults plus explicit
+/// mesh-request overrides (`query_chunk_size` defaults to 16384). Pure helper
+/// so the mapping and validation can be unit-tested without a server state.
+fn triposg_options_from_mesh_options(options: &MeshGenerationOptions) -> Result<TripoSgRunOptions> {
+    let defaults = TripoSgRunOptions::default();
+    let run_options = TripoSgRunOptions {
+        steps: options.steps.unwrap_or(defaults.steps),
+        guidance_scale: options.guidance_scale.unwrap_or(defaults.guidance_scale),
+        seed: options.seed.unwrap_or(defaults.seed),
+        num_tokens: options.num_tokens.unwrap_or(defaults.num_tokens),
+        dense_octree_depth: options
+            .dense_octree_depth
+            .unwrap_or(defaults.dense_octree_depth),
+        hierarchical_octree_depth: options
+            .hierarchical_octree_depth
+            .unwrap_or(defaults.hierarchical_octree_depth),
+        use_flash_decoder: options
+            .use_flash_decoder
+            .unwrap_or(defaults.use_flash_decoder),
+        flash_octree_depth: options
+            .flash_octree_depth
+            .unwrap_or(defaults.flash_octree_depth),
+        query_chunk_size: options
+            .query_chunk_size
+            .unwrap_or(defaults.query_chunk_size),
+    };
+    run_options.validate().map_err(anyhow::Error::from)?;
+    Ok(run_options)
+}
+
+/// Pure mesh-request guard shared by [`spawn_mesh_generation`]: the model
+/// allow-list plus per-model option validation, unit-tested without a server
+/// state.
+fn validate_mesh_generation_request(model: &str, options: &MeshGenerationOptions) -> Result<()> {
+    ensure!(
+        matches!(model, "triposr" | "triposg"),
+        "unsupported mesh model `{model}`; expected `triposr` or `triposg`"
+    );
+    if model == "triposr" {
+        ensure!(
+            options.mc_resolution >= 2,
+            "mc_resolution must be at least 2"
+        );
+        for (name, present) in [
+            ("steps", options.steps.is_some()),
+            ("guidance_scale", options.guidance_scale.is_some()),
+            ("seed", options.seed.is_some()),
+            ("num_tokens", options.num_tokens.is_some()),
+            ("dense_octree_depth", options.dense_octree_depth.is_some()),
+            (
+                "hierarchical_octree_depth",
+                options.hierarchical_octree_depth.is_some(),
+            ),
+            ("use_flash_decoder", options.use_flash_decoder.is_some()),
+            ("flash_octree_depth", options.flash_octree_depth.is_some()),
+            ("query_chunk_size", options.query_chunk_size.is_some()),
+        ] {
+            ensure!(!present, "`{name}` is not supported for `triposr`");
+        }
+        return Ok(());
+    }
+    // TripoSG owns the marching-cubes grid through its own octree-depth
+    // options, so the TripoSR knobs must stay at their defaults here.
+    ensure!(
+        options.mc_resolution == 256,
+        "`mc_resolution` is not supported for `triposg`; only the default 256 is supported"
+    );
+    ensure!(
+        options.mc_threshold == 25.0,
+        "`mc_threshold` is not supported for `triposg`; only the default 25.0 is supported"
+    );
+    triposg_options_from_mesh_options(options).map(|_| ())
+}
+
 pub async fn spawn_mesh_generation(
     state: Arc<Lux3dState>,
     record: JobRecord,
@@ -445,14 +519,12 @@ pub async fn spawn_mesh_generation(
     options: MeshGenerationOptions,
 ) -> Result<GenerationObject> {
     let model = record.object.model.clone();
-    ensure!(
-        model == "triposr",
-        "unsupported mesh model `{model}`; expected `triposr`"
-    );
-    ensure!(
-        options.mc_resolution >= 2,
-        "mc_resolution must be at least 2"
-    );
+    validate_mesh_generation_request(&model, &options)?;
+    let triposg_run_options = if model == "triposg" {
+        Some(triposg_options_from_mesh_options(&options)?)
+    } else {
+        None
+    };
 
     let job_id = record.object.id.clone();
     state.jobs.insert(record);
@@ -487,6 +559,7 @@ pub async fn spawn_mesh_generation(
                     .get(&job_id)
                     .map(|record| record.workspace.clone());
                 let source = source.clone();
+                let model = model.clone();
                 let mc_resolution = options.mc_resolution;
                 let mc_threshold = options.mc_threshold;
                 move |runtime| {
@@ -495,8 +568,8 @@ pub async fn spawn_mesh_generation(
                     }
                     runtime
                         .models
-                        .ensure_loaded(runtime, "triposr")
-                        .context("failed to load triposr pipeline")?;
+                        .ensure_loaded(runtime, &model)
+                        .with_context(|| format!("failed to load `{model}` pipeline"))?;
                     let workspace =
                         workspace.ok_or_else(|| anyhow::anyhow!("job workspace missing"))?;
                     fs::create_dir_all(&workspace).with_context(|| {
@@ -507,18 +580,41 @@ pub async fn spawn_mesh_generation(
                     })?;
                     let source = normalize_source_for_image(&source)?;
                     let device = runtime.device()?;
-                    let output_path = workspace.join("triposr.obj");
-                    runtime.models.with_triposr(|pipeline| {
-                        let inference = pipeline
-                            .infer_from_path(&source, &device)
-                            .map_err(anyhow::Error::from)?;
-                        let mesh = pipeline
-                            .extract_mesh(&inference.scene_codes, mc_resolution, mc_threshold, 8192)
-                            .map_err(anyhow::Error::from)?;
-                        pipeline
-                            .export_obj(&mesh, &output_path)
-                            .map_err(anyhow::Error::from)
-                    })?;
+                    let output_path = workspace.join(format!("{model}.obj"));
+                    match model.as_str() {
+                        "triposr" => runtime.models.with_triposr(|pipeline| {
+                            let inference = pipeline
+                                .infer_from_path(&source, &device)
+                                .map_err(anyhow::Error::from)?;
+                            let mesh = pipeline
+                                .extract_mesh(
+                                    &inference.scene_codes,
+                                    mc_resolution,
+                                    mc_threshold,
+                                    8192,
+                                )
+                                .map_err(anyhow::Error::from)?;
+                            pipeline
+                                .export_obj(&mesh, &output_path)
+                                .map_err(anyhow::Error::from)
+                        })?,
+                        "triposg" => {
+                            let run_options = triposg_run_options
+                                .expect("triposg options validated before the job was queued");
+                            runtime.models.with_triposg(|pipeline| {
+                                let inference = pipeline
+                                    .infer_from_path(&source, &device, &run_options)
+                                    .map_err(anyhow::Error::from)?;
+                                let mesh = pipeline
+                                    .extract_mesh(&inference.latents, &run_options)
+                                    .map_err(anyhow::Error::from)?;
+                                pipeline
+                                    .export_obj(&mesh, &output_path)
+                                    .map_err(anyhow::Error::from)
+                            })?
+                        }
+                        other => bail!("unsupported mesh model `{other}`"),
+                    }
                     Ok(output_path)
                 }
             })
@@ -591,4 +687,147 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MeshGenerationOptions, TripoSgRunOptions, triposg_options_from_mesh_options,
+        validate_mesh_generation_request,
+    };
+
+    fn default_mesh_options() -> MeshGenerationOptions {
+        MeshGenerationOptions::default()
+    }
+
+    #[test]
+    fn triposg_options_default_to_reference_values() {
+        let run = triposg_options_from_mesh_options(&default_mesh_options())
+            .expect("default triposg options");
+        assert_eq!(TripoSgRunOptions::default(), run);
+        assert_eq!(
+            (
+                50usize, 7.0f32, 42u64, 2048usize, 8u32, 9u32, true, 9u32, 16384usize
+            ),
+            (
+                run.steps,
+                run.guidance_scale,
+                run.seed,
+                run.num_tokens,
+                run.dense_octree_depth,
+                run.hierarchical_octree_depth,
+                run.use_flash_decoder,
+                run.flash_octree_depth,
+                run.query_chunk_size
+            )
+        );
+    }
+
+    #[test]
+    fn triposg_options_map_every_override() {
+        let options = MeshGenerationOptions {
+            steps: Some(12),
+            guidance_scale: Some(3.5),
+            seed: Some(7),
+            num_tokens: Some(1024),
+            dense_octree_depth: Some(5),
+            hierarchical_octree_depth: Some(6),
+            use_flash_decoder: Some(false),
+            flash_octree_depth: Some(7),
+            query_chunk_size: Some(4096),
+            ..default_mesh_options()
+        };
+        let run = triposg_options_from_mesh_options(&options).expect("overridden triposg options");
+        assert_eq!(12, run.steps);
+        assert_eq!(3.5, run.guidance_scale);
+        assert_eq!(7, run.seed);
+        assert_eq!(1024, run.num_tokens);
+        assert_eq!(5, run.dense_octree_depth);
+        assert_eq!(6, run.hierarchical_octree_depth);
+        assert!(!run.use_flash_decoder);
+        assert_eq!(7, run.flash_octree_depth);
+        assert_eq!(4096, run.query_chunk_size);
+    }
+
+    #[test]
+    fn triposg_accepts_default_mesh_request() {
+        validate_mesh_generation_request("triposg", &default_mesh_options())
+            .expect("default triposg request");
+    }
+
+    #[test]
+    fn triposg_rejects_non_default_marching_cubes_resolution() {
+        let options = MeshGenerationOptions {
+            mc_resolution: 128,
+            ..default_mesh_options()
+        };
+        let error = validate_mesh_generation_request("triposg", &options)
+            .expect_err("mc_resolution=128 must be rejected for triposg");
+        let message = error.to_string();
+        assert!(
+            message.contains("`mc_resolution`"),
+            "unexpected message: `{message}`"
+        );
+        assert!(
+            message.contains("is not supported for `triposg`"),
+            "unexpected message: `{message}`"
+        );
+    }
+
+    #[test]
+    fn triposg_rejects_non_default_marching_cubes_threshold() {
+        let options = MeshGenerationOptions {
+            mc_threshold: 10.0,
+            ..default_mesh_options()
+        };
+        let error = validate_mesh_generation_request("triposg", &options)
+            .expect_err("mc_threshold=10.0 must be rejected for triposg");
+        let message = error.to_string();
+        assert!(
+            message.contains("`mc_threshold`"),
+            "unexpected message: `{message}`"
+        );
+        assert!(
+            message.contains("is not supported for `triposg`"),
+            "unexpected message: `{message}`"
+        );
+    }
+
+    #[test]
+    fn triposr_accepts_default_mesh_request() {
+        validate_mesh_generation_request("triposr", &default_mesh_options())
+            .expect("default triposr request");
+    }
+
+    #[test]
+    fn triposr_rejects_triposg_only_steps() {
+        let options = MeshGenerationOptions {
+            steps: Some(2),
+            ..default_mesh_options()
+        };
+        let error = validate_mesh_generation_request("triposr", &options)
+            .expect_err("steps=Some(2) must be rejected for triposr");
+        assert!(
+            error
+                .to_string()
+                .contains("`steps` is not supported for `triposr`"),
+            "unexpected message: `{}`",
+            error
+        );
+    }
+
+    #[test]
+    fn unsupported_mesh_models_are_rejected() {
+        for model in ["pi3", "pi3x", "pi3x_vo", "vggt", "", "triposrg"] {
+            let error = validate_mesh_generation_request(model, &default_mesh_options())
+                .expect_err("unsupported mesh model must be rejected");
+            let expected =
+                format!("unsupported mesh model `{model}`; expected `triposr` or `triposg`");
+            assert!(
+                error.to_string().contains(&expected),
+                "unexpected message for `{model}`: `{}`",
+                error
+            );
+        }
+    }
 }

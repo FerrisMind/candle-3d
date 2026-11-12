@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use lux3d_core::runtime::{
-    Pi3Pipeline, Pi3xPipeline, Pi3xVoPipeline, TripoSrPipeline, VggtPipeline,
+    Pi3Pipeline, Pi3xPipeline, Pi3xVoPipeline, TripoSgPipeline, TripoSrPipeline, VggtPipeline,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -30,6 +30,7 @@ enum CachedPipeline {
     Pi3x(Pi3xPipeline),
     Pi3xVo(Pi3xVoPipeline),
     TripoSr(TripoSrPipeline),
+    TripoSg(TripoSgPipeline),
     Vggt(VggtPipeline),
 }
 
@@ -103,6 +104,10 @@ impl ModelRegistry {
             "triposr" => CachedPipeline::TripoSr(
                 TripoSrPipeline::load(assets).context("failed to load triposr pipeline")?,
             ),
+            "triposg" => CachedPipeline::TripoSg(
+                TripoSgPipeline::load_with_rmbg(assets, state.rmbg_model_path.clone())
+                    .context("failed to load triposg pipeline")?,
+            ),
             "vggt" => CachedPipeline::Vggt(
                 VggtPipeline::load(assets).context("failed to load vggt pipeline")?,
             ),
@@ -161,6 +166,17 @@ impl ModelRegistry {
         }
     }
 
+    pub fn with_triposg<R>(&self, f: impl FnOnce(&TripoSgPipeline) -> Result<R>) -> Result<R> {
+        let models = self
+            .inner
+            .read()
+            .map_err(|_| anyhow::anyhow!("model registry lock poisoned"))?;
+        match models.get("triposg") {
+            Some(CachedPipeline::TripoSg(pipeline)) => f(pipeline),
+            _ => bail!("triposg pipeline is not loaded"),
+        }
+    }
+
     pub fn with_vggt<R>(&self, f: impl FnOnce(&VggtPipeline) -> Result<R>) -> Result<R> {
         let models = self
             .inner
@@ -174,7 +190,10 @@ impl ModelRegistry {
 }
 
 fn is_supported_model(model_id: &str) -> bool {
-    matches!(model_id, "pi3" | "pi3x" | "pi3x_vo" | "triposr" | "vggt")
+    matches!(
+        model_id,
+        "pi3" | "pi3x" | "pi3x_vo" | "triposr" | "triposg" | "vggt"
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

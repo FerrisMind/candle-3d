@@ -1,9 +1,6 @@
 //! Server-Sent Events stream for generation job status updates.
 
-use std::{
-    convert::Infallible,
-    time::Duration,
-};
+use std::{convert::Infallible, time::Duration};
 
 use async_stream::stream;
 use axum::{
@@ -13,11 +10,7 @@ use axum::{
 use futures::Stream;
 use tokio::time::sleep;
 
-use crate::{
-    api_types::GenerationObject,
-    errors::not_found,
-    types::ExtractedLux3dState,
-};
+use crate::{api_types::GenerationObject, errors::not_found, types::ExtractedLux3dState};
 
 const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const STREAM_KEEPALIVE: Duration = Duration::from_secs(15);

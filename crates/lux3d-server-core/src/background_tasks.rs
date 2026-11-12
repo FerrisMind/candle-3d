@@ -18,8 +18,7 @@ pub fn spawn_cleanup_task(state: Arc<Lux3dState>) {
             if removed_jobs > 0 || removed_files > 0 {
                 info!(
                     removed_jobs,
-                    removed_files,
-                    "completed background cleanup pass"
+                    removed_files, "completed background cleanup pass"
                 );
             } else {
                 debug!("background cleanup pass found nothing to remove");

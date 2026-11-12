@@ -125,12 +125,7 @@ impl Lux3dServerRouterBuilder {
 
         let cors = CorsLayer::new()
             .allow_origin(allow_origin)
-            .allow_methods([
-                Method::GET,
-                Method::POST,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_headers([
                 header::CONTENT_TYPE,
                 header::AUTHORIZATION,
@@ -166,10 +161,7 @@ impl Lux3dServerRouterBuilder {
             .route("/v1/meshes/generations", post(create_mesh_generation))
             .route("/v1/system/info", get(system_info))
             .route("/v1/system/doctor", post(system_doctor))
-            .layer(from_fn_with_state(
-                observability,
-                metrics::observe_http,
-            ))
+            .layer(from_fn_with_state(observability, metrics::observe_http))
             .layer(DefaultBodyLimit::max(router_max_body_limit))
             .layer(cors)
             .with_state(lux3d);

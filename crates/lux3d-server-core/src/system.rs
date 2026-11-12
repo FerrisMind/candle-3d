@@ -102,10 +102,15 @@ pub async fn system_doctor(State(state): ExtractedLux3dState) -> Json<DoctorRepo
     checks.push(DoctorCheck {
         name: "model_assets".to_string(),
         ok: model_assets_ok,
-        detail: describe_model_assets(&state.model_assets.canonical_dir, &state.model_assets.cache_dir),
+        detail: describe_model_assets(
+            &state.model_assets.canonical_dir,
+            &state.model_assets.cache_dir,
+        ),
     });
 
-    let ok = checks.iter().all(|check| check.ok || check.name == "ffmpeg");
+    let ok = checks
+        .iter()
+        .all(|check| check.ok || check.name == "ffmpeg");
     Json(DoctorReport {
         object: "system.doctor",
         ok,

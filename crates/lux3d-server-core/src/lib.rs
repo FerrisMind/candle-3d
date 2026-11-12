@@ -27,8 +27,8 @@ pub mod route_registry;
 pub mod stream;
 pub mod system;
 pub mod types;
-pub mod webhooks;
 mod upload;
+pub mod webhooks;
 
 pub use config::{GenerationDefaults, ObservabilityConfig};
 pub use types::{DeviceBackend, ExtractedLux3dState, Lux3dState, SharedLux3dState};

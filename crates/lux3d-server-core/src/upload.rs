@@ -43,12 +43,10 @@ where
     {
         match field.name().unwrap_or_default() {
             "source" => {
-                source_path =
-                    Some(save_upload_field(field, workspace, "source").await?);
+                source_path = Some(save_upload_field(field, workspace, "source").await?);
             }
             "conditions" => {
-                conditions_path =
-                    Some(save_upload_field(field, workspace, "conditions").await?);
+                conditions_path = Some(save_upload_field(field, workspace, "conditions").await?);
             }
             "model" => {
                 model = Some(field.text().await.context("failed to read model field")?);
@@ -62,7 +60,9 @@ where
 
     let source_path = source_path.context("missing required multipart field `source`")?;
     let options = match options_json {
-        Some(json) => serde_json::from_str(&json).context("failed to parse `options` JSON field")?,
+        Some(json) => {
+            serde_json::from_str(&json).context("failed to parse `options` JSON field")?
+        }
         None => T::default(),
     };
 
@@ -128,9 +128,8 @@ async fn save_upload_field(
     let original_name = field.file_name().unwrap_or(prefix).to_string();
     let sanitized = sanitize_filename(&original_name);
     let path = workspace.join(format!("{prefix}-{sanitized}"));
-    let mut file = fs::File::create(&path).with_context(|| {
-        format!("failed to create upload file at `{}`", path.display())
-    })?;
+    let mut file = fs::File::create(&path)
+        .with_context(|| format!("failed to create upload file at `{}`", path.display()))?;
     while let Some(chunk) = field.chunk().await.context("failed to read upload chunk")? {
         file.write_all(&chunk)
             .with_context(|| format!("failed to write upload chunk to `{}`", path.display()))?;
@@ -167,15 +166,18 @@ fn extract_zip(source: &Path, destination: PathBuf) -> Result<PathBuf> {
             fs::create_dir_all(parent)?;
         }
         let mut out_file = fs::File::create(&out_path).with_context(|| {
-            format!("failed to create extracted file at `{}`", out_path.display())
+            format!(
+                "failed to create extracted file at `{}`",
+                out_path.display()
+            )
         })?;
         let mut buffer = Vec::new();
         entry
             .read_to_end(&mut buffer)
             .with_context(|| format!("failed to read zip entry at `{}`", out_path.display()))?;
-        out_file
-            .write_all(&buffer)
-            .with_context(|| format!("failed to write extracted file at `{}`", out_path.display()))?;
+        out_file.write_all(&buffer).with_context(|| {
+            format!("failed to write extracted file at `{}`", out_path.display())
+        })?;
     }
 
     Ok(destination)

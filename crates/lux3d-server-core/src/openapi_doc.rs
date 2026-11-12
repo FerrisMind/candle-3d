@@ -6,8 +6,7 @@ use crate::{
     api_types::{
         ErrorBody, ErrorResponse, GenerationError, GenerationListResponse, GenerationObject,
         MeshGenerationOptions, MeshGenerationRequest, ModelListResponse, ModelObject,
-        PointCloudGenerationOptions, PointCloudGenerationRequest, RouteSummary,
-        ServerInfoResponse,
+        PointCloudGenerationOptions, PointCloudGenerationRequest, RouteSummary, ServerInfoResponse,
     },
     errors::{ApiErrorBody, ApiErrorResponse},
     files::{FileListResponse, FileObject},
@@ -71,7 +70,7 @@ use crate::{
     info(
         title = "Lux3D Server API",
         version = "0.1.0",
-        description = "Async HTTP API for Pi3/Pi3X point clouds and TripoSR meshes."
+        description = "Async HTTP API for Pi3/Pi3X/VGGT point clouds and TripoSR/TripoSG meshes."
     )
 )]
 struct ApiDoc;

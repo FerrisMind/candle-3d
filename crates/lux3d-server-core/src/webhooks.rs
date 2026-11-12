@@ -5,10 +5,7 @@ use serde::Serialize;
 use tracing::{info, warn};
 use url::Url;
 
-use crate::{
-    api_types::GenerationObject,
-    metrics::record_webhook_delivery,
-};
+use crate::{api_types::GenerationObject, metrics::record_webhook_delivery};
 
 #[derive(Debug, Serialize)]
 struct WebhookPayload<'a> {

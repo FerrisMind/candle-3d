@@ -101,6 +101,26 @@ pub struct MeshGenerationOptions {
     pub mc_resolution: u32,
     #[serde(default = "default_mc_threshold")]
     pub mc_threshold: f32,
+    // TripoSG-only options (`Option`-typed so omitted fields stay `None` and
+    // triposr keeps working unchanged).
+    #[serde(default)]
+    pub steps: Option<usize>,
+    #[serde(default)]
+    pub guidance_scale: Option<f32>,
+    #[serde(default)]
+    pub seed: Option<u64>,
+    #[serde(default)]
+    pub num_tokens: Option<usize>,
+    #[serde(default)]
+    pub dense_octree_depth: Option<u32>,
+    #[serde(default)]
+    pub hierarchical_octree_depth: Option<u32>,
+    #[serde(default)]
+    pub use_flash_decoder: Option<bool>,
+    #[serde(default)]
+    pub flash_octree_depth: Option<u32>,
+    #[serde(default)]
+    pub query_chunk_size: Option<usize>,
 }
 
 fn default_mc_resolution() -> u32 {
@@ -116,6 +136,15 @@ impl Default for MeshGenerationOptions {
         Self {
             mc_resolution: default_mc_resolution(),
             mc_threshold: default_mc_threshold(),
+            steps: None,
+            guidance_scale: None,
+            seed: None,
+            num_tokens: None,
+            dense_octree_depth: None,
+            hierarchical_octree_depth: None,
+            use_flash_decoder: None,
+            flash_octree_depth: None,
+            query_chunk_size: None,
         }
     }
 }

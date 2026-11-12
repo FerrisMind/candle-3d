@@ -47,6 +47,9 @@ impl DeviceBackend {
 #[derive(Debug, Clone)]
 pub struct Lux3dState {
     pub model_assets: ModelAssetOptions,
+    /// Optional separate RMBG-1.4 canonical package (BRIA license). The
+    /// TripoSG pipeline needs it for inputs without a valid alpha channel.
+    pub rmbg_model_path: Option<PathBuf>,
     pub cuda_device: usize,
     pub backend: DeviceBackend,
     pub upload_dir: PathBuf,
@@ -66,6 +69,7 @@ pub type ExtractedLux3dState = State<SharedLux3dState>;
 impl Lux3dState {
     pub(crate) fn new(
         model_assets: ModelAssetOptions,
+        rmbg_model_path: Option<PathBuf>,
         cuda_device: usize,
         backend: DeviceBackend,
         upload_dir: PathBuf,
@@ -79,6 +83,7 @@ impl Lux3dState {
 
         Self {
             model_assets,
+            rmbg_model_path,
             cuda_device,
             backend,
             upload_dir,

@@ -9,10 +9,7 @@ use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use url::Url;
 
-use crate::{
-    files::resolve_file_path,
-    types::Lux3dState,
-};
+use crate::{files::resolve_file_path, types::Lux3dState};
 
 #[derive(Debug, Clone, Default)]
 pub struct MediaSourceInput {

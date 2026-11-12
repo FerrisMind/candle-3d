@@ -26,8 +26,7 @@ pub const GENERATION_CANCEL_ROUTE: RouteInfo =
     RouteInfo::new("/v1/generations/{id}/cancel", "POST");
 pub const GENERATION_CONTENT_ROUTE: RouteInfo =
     RouteInfo::new("/v1/generations/{id}/content", "GET");
-pub const GENERATION_STREAM_ROUTE: RouteInfo =
-    RouteInfo::new("/v1/generations/{id}/stream", "GET");
+pub const GENERATION_STREAM_ROUTE: RouteInfo = RouteInfo::new("/v1/generations/{id}/stream", "GET");
 pub const POINT_CLOUD_GENERATIONS_ROUTE: RouteInfo =
     RouteInfo::new("/v1/point-clouds/generations", "POST");
 pub const MESH_GENERATIONS_ROUTE: RouteInfo = RouteInfo::new("/v1/meshes/generations", "POST");

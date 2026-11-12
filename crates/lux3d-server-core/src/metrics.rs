@@ -89,10 +89,7 @@ pub async fn observe_http(
         None
     };
 
-    let in_flight_labels = [
-        ("method", method.clone()),
-        ("route", route.clone()),
-    ];
+    let in_flight_labels = [("method", method.clone()), ("route", route.clone())];
     metrics::gauge!("http_requests_in_flight", &in_flight_labels).increment(1.0);
 
     let response = next.run(request).await;
@@ -168,14 +165,7 @@ fn log_access(
     let elapsed_ms = (elapsed_secs * 1_000.0).round() as u64;
     match format {
         AccessLogFormat::Text => {
-            info!(
-                method,
-                route,
-                status,
-                elapsed_ms,
-                request_id,
-                "http access"
-            );
+            info!(method, route, status, elapsed_ms, request_id, "http access");
         }
         AccessLogFormat::Json => {
             let timestamp = SystemTime::now()

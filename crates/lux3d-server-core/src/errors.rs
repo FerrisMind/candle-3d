@@ -1,6 +1,10 @@
 //! Structured HTTP error responses.
 
-use axum::{Json, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -17,7 +21,12 @@ pub struct ApiErrorResponse {
     pub error: ApiErrorBody,
 }
 
-pub fn api_error(status: StatusCode, error_type: &str, code: &str, message: impl Into<String>) -> Response {
+pub fn api_error(
+    status: StatusCode,
+    error_type: &str,
+    code: &str,
+    message: impl Into<String>,
+) -> Response {
     let body = ApiErrorResponse {
         error: ApiErrorBody {
             message: message.into(),

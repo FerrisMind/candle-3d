@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(
     name = "lux3d-server",
-    about = "HTTP server for Lux3D Pi3, Pi3X, and TripoSR reconstruction."
+    about = "HTTP server for Lux3D Pi3, Pi3X, TripoSR, VGGT, and TripoSG reconstruction."
 )]
 struct Args {
     #[arg(long, default_value = "127.0.0.1")]
@@ -25,6 +25,9 @@ struct Args {
 
     #[arg(long, env = "LUX3D_CACHE_DIR")]
     cache_dir: Option<PathBuf>,
+
+    #[arg(long, env = "LUX3D_RMBG_MODEL_PATH")]
+    rmbg_model_path: Option<PathBuf>,
 
     #[arg(long, default_value_t = 0)]
     cuda_device: usize,
@@ -98,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
     let lux3d = Lux3dForServerBuilder::new()
         .with_model_path_optional(args.model_path)
         .with_cache_dir_optional(args.cache_dir)
+        .with_rmbg_model_path_optional(args.rmbg_model_path)
         .with_cuda_device(args.cuda_device)
         .with_upload_dir_optional(args.upload_dir)
         .with_job_ttl_secs(args.job_ttl_secs)

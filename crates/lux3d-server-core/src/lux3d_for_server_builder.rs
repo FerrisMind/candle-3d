@@ -23,6 +23,7 @@ pub mod defaults {
 pub struct Lux3dForServerBuilder {
     model_path: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
+    rmbg_model_path: Option<PathBuf>,
     cuda_device: usize,
     backend: Option<DeviceBackend>,
     upload_dir: Option<PathBuf>,
@@ -35,6 +36,7 @@ impl Default for Lux3dForServerBuilder {
         Self {
             model_path: defaults::MODEL_PATH,
             cache_dir: defaults::CACHE_DIR,
+            rmbg_model_path: None,
             cuda_device: defaults::CUDA_DEVICE,
             backend: None,
             upload_dir: defaults::UPLOAD_DIR,
@@ -69,6 +71,22 @@ impl Lux3dForServerBuilder {
     pub fn with_cache_dir_optional(mut self, cache_dir: Option<PathBuf>) -> Self {
         if let Some(cache_dir) = cache_dir {
             self = self.with_cache_dir(cache_dir);
+        }
+        self
+    }
+
+    /// Set the separate RMBG-1.4 canonical package used by TripoSG for
+    /// images without a valid alpha channel. When unset, a sibling
+    /// `rmbg-1.4` directory next to an explicit `--model-path` is discovered
+    /// automatically.
+    pub fn with_rmbg_model_path(mut self, rmbg_model_path: impl Into<PathBuf>) -> Self {
+        self.rmbg_model_path = Some(rmbg_model_path.into());
+        self
+    }
+
+    pub fn with_rmbg_model_path_optional(mut self, rmbg_model_path: Option<PathBuf>) -> Self {
+        if let Some(rmbg_model_path) = rmbg_model_path {
+            self = self.with_rmbg_model_path(rmbg_model_path);
         }
         self
     }
@@ -129,6 +147,13 @@ impl Lux3dForServerBuilder {
             }
         };
 
+        let rmbg_model_path = self.rmbg_model_path.or_else(|| {
+            self.model_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .map(|parent| parent.join("rmbg-1.4"))
+                .filter(|candidate| candidate.is_dir())
+        });
         let model_assets = ModelAssetOptions {
             canonical_dir: self.model_path,
             cache_dir: self.cache_dir,
@@ -138,6 +163,7 @@ impl Lux3dForServerBuilder {
 
         Ok(std::sync::Arc::new(Lux3dState::new(
             model_assets,
+            rmbg_model_path,
             self.cuda_device,
             backend,
             upload_dir,

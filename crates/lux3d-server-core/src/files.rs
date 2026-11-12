@@ -90,7 +90,10 @@ impl FileStore {
         let Ok(files) = self.inner.read() else {
             return Vec::new();
         };
-        let mut entries: Vec<_> = files.values().map(|record| record.metadata.clone()).collect();
+        let mut entries: Vec<_> = files
+            .values()
+            .map(|record| record.metadata.clone())
+            .collect();
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.created_at));
         entries.truncate(limit);
         entries
@@ -196,17 +199,17 @@ pub async fn store_upload(
         (status = 400, description = "Invalid upload")
     )
 )]
-pub async fn upload_file(
-    State(state): ExtractedLux3dState,
-    multipart: Multipart,
-) -> Response {
+pub async fn upload_file(State(state): ExtractedLux3dState, multipart: Multipart) -> Response {
     match parse_file_upload(multipart).await {
         Ok(upload) => match store_upload(
             &state.files,
             &state.upload_dir,
             &upload.purpose,
             &upload.filename,
-            upload.mime_type.as_deref().unwrap_or("application/octet-stream"),
+            upload
+                .mime_type
+                .as_deref()
+                .unwrap_or("application/octet-stream"),
             &upload.bytes,
             state.generation_defaults.job_ttl_secs,
         )
@@ -287,10 +290,7 @@ pub async fn get_file_content(
             bytes,
         )
             .into_response(),
-        Err(error) => internal_error(format!(
-            "failed to read file `{}`: {error}",
-            path.display()
-        )),
+        Err(error) => internal_error(format!("failed to read file `{}`: {error}", path.display())),
     }
 }
 
@@ -360,8 +360,7 @@ async fn parse_file_upload(mut multipart: Multipart) -> Result<ParsedFileUpload>
     let purpose = purpose
         .filter(|value| !value.trim().is_empty())
         .context("missing required multipart field `purpose`")?;
-    let (filename, mime_type, bytes) =
-        file.context("missing required multipart field `file`")?;
+    let (filename, mime_type, bytes) = file.context("missing required multipart field `file`")?;
 
     Ok(ParsedFileUpload {
         purpose,
