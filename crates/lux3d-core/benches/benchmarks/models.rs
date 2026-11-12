@@ -1,7 +1,7 @@
 use super::BenchDevice;
-use criterion::{criterion_group, Criterion, Throughput};
-use lux3d_core::runtime::{Pi3Pipeline, Pi3xPipeline, TripoSrPipeline};
+use criterion::{Criterion, Throughput, criterion_group};
 use lux3d_core::ModelAssetOptions;
+use lux3d_core::runtime::{Pi3Pipeline, Pi3xPipeline, TripoSrPipeline};
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -20,11 +20,7 @@ type InferFn = Box<dyn Fn() -> anyhow::Result<Duration> + 'static>;
 /// Load weights once, return a closure timing one full `infer_from_path`
 /// (preprocess + neural pass) per call — the same scope as the CLI's
 /// `[stage] infer`.
-fn make_infer(
-    model: &str,
-    source: &Path,
-    device: &candle_core::Device,
-) -> anyhow::Result<InferFn> {
+fn make_infer(model: &str, source: &Path, device: &candle_core::Device) -> anyhow::Result<InferFn> {
     let models_dir = workspace_dir(MODELS_DIR_ENV, "../../models");
     let assets = ModelAssetOptions {
         canonical_dir: Some(models_dir.join(model)),
@@ -117,10 +113,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         "wgpu" => candle_core::Device::new_wgpu(0),
         "cuda" => candle_core::Device::new_cuda(0),
         "cpu" => Ok(candle_core::Device::Cpu),
-        other => Err(candle_core::Error::Msg(format!(
-            "unknown LUX3D_BENCH_DEVICE `{other}`"
-        ))
-        .bt()),
+        other => Err(candle_core::Error::Msg(format!("unknown LUX3D_BENCH_DEVICE `{other}`")).bt()),
     }
     .expect("device init failed");
 

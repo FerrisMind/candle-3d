@@ -10,7 +10,9 @@ use tracing_subscriber::prelude::*;
 
 fn main() -> anyhow::Result<()> {
     let (chrome_layer, guard) = ChromeLayerBuilder::new().file("vk_pi3x_trace.json").build();
-    let _subscriber = tracing_subscriber::registry().with(chrome_layer).set_default();
+    let _subscriber = tracing_subscriber::registry()
+        .with(chrome_layer)
+        .set_default();
 
     let models_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
     let assets_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-assets");
