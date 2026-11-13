@@ -18,8 +18,11 @@
 //!
 //! BatchNorm runs in eval mode with the stored running statistics and eps
 //! `1e-5`. `num_batches_tracked` is a training-only integer buffer and is not
-//! read. Everything stays F32; `candle_nn` maps all operations onto the
-//! selected backend.
+//! read. The loader accepts an F16 VarBuilder for cross-backend precision
+//! experiments, but RMBG is sensitive to half-precision activation storage:
+//! F16 backends agree with each other to ~1e-3, while the F16 mask differs from
+//! F32 by ~1e-1 rel_l2 (about 0.27% binary flips). Prefer F32 or F16-class
+//! reduced-precision matmul when the mask must match F32.
 
 use crate::weights::VarBuilder;
 use candle_core::{Result as CandleResult, Tensor};

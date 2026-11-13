@@ -19,7 +19,9 @@
 //!
 //! `--dtype f16` selects F16 weights/activations for TripoSG, VGGT and RMBG.
 //! Public outputs are converted back to F32 before the dump; `--dtype f32` is
-//! the strict-F32 reference mode.
+//! the strict-F32 reference mode. RMBG true F16 is cross-backend-consistent
+//! (~1e-3) but differs from F32 by ~1e-1 rel_l2 on the mask, so use it for
+//! backend-parity checks rather than as an F32-equivalent result.
 //!
 //! `--reduced-precision` mirrors the CLI/server default: Vulkan cooperative
 //! matmul runs with TF32-class inputs and WGPU cooperative matmul runs with
