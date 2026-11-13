@@ -86,6 +86,9 @@ pub struct RouteSummary {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, ToSchema)]
 pub struct PointCloudGenerationOptions {
+    /// Point-cloud artifact format: `ply` (default) or `xyz`.
+    #[serde(default)]
+    pub output_format: Option<String>,
     pub interval: Option<usize>,
     pub vo: Option<bool>,
     pub chunk_size: Option<usize>,
@@ -97,6 +100,9 @@ pub struct PointCloudGenerationOptions {
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct MeshGenerationOptions {
+    /// Mesh artifact format: `glb` (default), `obj`, `ply` or `stl`.
+    #[serde(default)]
+    pub output_format: Option<String>,
     #[serde(default = "default_mc_resolution")]
     pub mc_resolution: u32,
     #[serde(default = "default_mc_threshold")]
@@ -134,6 +140,7 @@ fn default_mc_threshold() -> f32 {
 impl Default for MeshGenerationOptions {
     fn default() -> Self {
         Self {
+            output_format: None,
             mc_resolution: default_mc_resolution(),
             mc_threshold: default_mc_threshold(),
             steps: None,

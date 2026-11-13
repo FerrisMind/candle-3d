@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail, ensure};
+use lux3d_core::export::{MeshFormat, PointCloudFormat};
 use lux3d_core::runtime::{Pi3xInjectConditions, TripoSgRunOptions};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -254,6 +255,8 @@ pub async fn spawn_point_cloud_generation(
     options: PointCloudGenerationOptions,
 ) -> Result<GenerationObject> {
     let model = record.object.model.clone();
+    let format = PointCloudFormat::from_extension(&record.object.output_format)
+        .map_err(anyhow::Error::from)?;
     ensure!(
         matches!(model.as_str(), "pi3" | "pi3x" | "vggt"),
         "unsupported point-cloud model `{model}`; expected \"pi3\", \"pi3x\" or \"vggt\""
@@ -338,15 +341,16 @@ pub async fn spawn_point_cloud_generation(
                         workspace.ok_or_else(|| anyhow::anyhow!("job workspace missing"))?;
                     let source = normalize_source_for_frames(&source, &workspace)?;
                     let device = runtime.device()?;
-                    let output_path = workspace.join(format!("{model}.ply"));
+                    let output_path = workspace.join(format!("{model}.{}", format.extension()));
                     match model.as_str() {
                         "pi3" => runtime.models.with_pi3(|pipeline| {
                             let inference = pipeline
                                 .infer_from_path_with_interval(&source, options.interval, &device)
                                 .map_err(anyhow::Error::from)?;
                             pipeline
-                                .export_ply(&inference, &output_path)
-                                .map_err(anyhow::Error::from)
+                                .export_point_cloud(&inference, &output_path)
+                                .map_err(anyhow::Error::from)?;
+                            Ok(())
                         })?,
                         "pi3x" if options.vo.unwrap_or(false) => {
                             let inject_conditions =
@@ -364,8 +368,9 @@ pub async fn spawn_point_cloud_generation(
                                     )
                                     .map_err(anyhow::Error::from)?;
                                 pipeline
-                                    .export_ply(&inference, &output_path)
-                                    .map_err(anyhow::Error::from)
+                                    .export_point_cloud(&inference, &output_path)
+                                    .map_err(anyhow::Error::from)?;
+                                Ok(())
                             })?
                         }
                         "pi3x" => runtime.models.with_pi3x(|pipeline| {
@@ -378,20 +383,22 @@ pub async fn spawn_point_cloud_generation(
                                 )
                                 .map_err(anyhow::Error::from)?;
                             pipeline
-                                .export_ply(&inference, &output_path)
-                                .map_err(anyhow::Error::from)
+                                .export_point_cloud(&inference, &output_path)
+                                .map_err(anyhow::Error::from)?;
+                            Ok(())
                         })?,
                         "vggt" => runtime.models.with_vggt(|pipeline| {
                             let inference = pipeline
                                 .infer_from_path(&source, options.interval, &device)
                                 .map_err(anyhow::Error::from)?;
                             pipeline
-                                .export_ply_with_threshold(
+                                .export_point_cloud_with_threshold(
                                     &inference,
                                     &output_path,
                                     options.conf_threshold.unwrap_or(1.0),
                                 )
-                                .map_err(anyhow::Error::from)
+                                .map_err(anyhow::Error::from)?;
+                            Ok(())
                         })?,
                         _ => bail!("unsupported point-cloud model `{model}`"),
                     }
@@ -520,6 +527,10 @@ pub async fn spawn_mesh_generation(
 ) -> Result<GenerationObject> {
     let model = record.object.model.clone();
     validate_mesh_generation_request(&model, &options)?;
+    let output_format = match options.output_format.as_deref() {
+        Some(format) => MeshFormat::from_extension(format).map_err(anyhow::Error::from)?,
+        None => MeshFormat::Glb,
+    };
     let triposg_run_options = if model == "triposg" {
         Some(triposg_options_from_mesh_options(&options)?)
     } else {
@@ -580,7 +591,8 @@ pub async fn spawn_mesh_generation(
                     })?;
                     let source = normalize_source_for_image(&source)?;
                     let device = runtime.device()?;
-                    let output_path = workspace.join(format!("{model}.obj"));
+                    let output_path =
+                        workspace.join(format!("{model}.{}", output_format.extension()));
                     match model.as_str() {
                         "triposr" => runtime.models.with_triposr(|pipeline| {
                             let inference = pipeline
@@ -595,8 +607,9 @@ pub async fn spawn_mesh_generation(
                                 )
                                 .map_err(anyhow::Error::from)?;
                             pipeline
-                                .export_obj(&mesh, &output_path)
-                                .map_err(anyhow::Error::from)
+                                .export_mesh(&mesh, &output_path)
+                                .map_err(anyhow::Error::from)?;
+                            Ok(())
                         })?,
                         "triposg" => {
                             let run_options = triposg_run_options
@@ -609,8 +622,9 @@ pub async fn spawn_mesh_generation(
                                     .extract_mesh(&inference.latents, &run_options)
                                     .map_err(anyhow::Error::from)?;
                                 pipeline
-                                    .export_obj(&mesh, &output_path)
-                                    .map_err(anyhow::Error::from)
+                                    .export_mesh(&mesh, &output_path)
+                                    .map_err(anyhow::Error::from)?;
+                                Ok(())
                             })?
                         }
                         other => bail!("unsupported mesh model `{other}`"),

@@ -209,7 +209,10 @@ pub struct RunArgs {
     )]
     pub cache_dir: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Output artifact path. Mesh families dispatch on extension: `.glb` (default), `.obj`, `.ply`, `.stl`. Point clouds use `.ply` (default) or `.xyz`."
+    )]
     pub output: PathBuf,
 
     #[arg(
@@ -672,7 +675,7 @@ fn run_pi3(
         eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
     }
     let t2 = std::time::Instant::now();
-    pipeline.export_ply(&inference, output)?;
+    pipeline.export_point_cloud(&inference, output)?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
     }
@@ -854,7 +857,11 @@ fn run_vggt(
             .export_inference_npz(&inference, npz_path)
             .map_err(anyhow::Error::from)?;
     }
-    pipeline.export_ply_with_threshold(&inference, output, conf_threshold.unwrap_or(1.0))?;
+    pipeline.export_point_cloud_with_threshold(
+        &inference,
+        output,
+        conf_threshold.unwrap_or(1.0),
+    )?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
     }
@@ -907,7 +914,7 @@ fn run_pi3x(
             eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
         }
         let t2 = std::time::Instant::now();
-        pipeline.export_ply(&inference, output)?;
+        pipeline.export_point_cloud(&inference, output)?;
         if stage_time {
             eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
         }
@@ -923,7 +930,7 @@ fn run_pi3x(
             eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
         }
         let t2 = std::time::Instant::now();
-        pipeline.export_ply(&inference, output)?;
+        pipeline.export_point_cloud(&inference, output)?;
         if stage_time {
             eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
         }
@@ -957,7 +964,7 @@ fn run_triposr(
         eprintln!("[stage] mesh: {:.2}s", t2.elapsed().as_secs_f64());
     }
     let t3 = std::time::Instant::now();
-    pipeline.export_obj(&mesh, output)?;
+    pipeline.export_mesh(&mesh, output)?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());
     }
@@ -990,7 +997,7 @@ fn run_triposg(
         eprintln!("[stage] mesh: {:.2}s", t2.elapsed().as_secs_f64());
     }
     let t3 = std::time::Instant::now();
-    pipeline.export_obj(&mesh, output)?;
+    pipeline.export_mesh(&mesh, output)?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());
     }

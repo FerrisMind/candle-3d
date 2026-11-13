@@ -12,6 +12,8 @@ use axum::{
 };
 use serde::Deserialize;
 
+use lux3d_core::export::{MeshFormat, PointCloudFormat};
+
 use crate::{
     api_types::{
         ErrorBody, ErrorResponse, GenerationListResponse, GenerationObject, GenerationStatus,
@@ -84,8 +86,8 @@ pub async fn models(State(state): ExtractedLux3dState) -> Json<ModelListResponse
             model_entry(&state, "pi3", "point_cloud", "ply"),
             model_entry(&state, "pi3x", "point_cloud", "ply"),
             model_entry(&state, "vggt", "point_cloud", "ply"),
-            model_entry(&state, "triposr", "mesh", "obj"),
-            model_entry(&state, "triposg", "mesh", "obj"),
+            model_entry(&state, "triposr", "mesh", "glb"),
+            model_entry(&state, "triposg", "mesh", "glb"),
         ],
     })
 }
@@ -382,14 +384,15 @@ async fn create_point_cloud_generation_multipart(
     let model = upload
         .model
         .context("missing required multipart field `model` (`pi3`, `pi3x` or `vggt`)")?;
+    let format = point_cloud_output_format(&options)?;
 
     let record = create_job_record(NewJobRecord {
         job_id,
         model,
-        output_format: "ply".to_string(),
+        output_format: format.extension().to_string(),
         workspace,
-        content_type: "model/ply".to_string(),
-        download_filename: "point-cloud.ply".to_string(),
+        content_type: format.content_type().to_string(),
+        download_filename: format!("point-cloud.{}", format.extension()),
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: None,
     });
@@ -416,14 +419,15 @@ async fn create_point_cloud_generation_json(
     )
     .await?;
     let conditions = resolve_conditions_path(&state, request.conditions_file_id.as_deref())?;
+    let format = point_cloud_output_format(&request.options)?;
 
     let record = create_job_record(NewJobRecord {
         job_id,
         model: request.model,
-        output_format: "ply".to_string(),
+        output_format: format.extension().to_string(),
         workspace,
-        content_type: "model/ply".to_string(),
-        download_filename: "point-cloud.ply".to_string(),
+        content_type: format.content_type().to_string(),
+        download_filename: format!("point-cloud.{}", format.extension()),
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: request.webhook_url,
     });
@@ -431,13 +435,30 @@ async fn create_point_cloud_generation_json(
     spawn_point_cloud_generation(state, record, source, conditions, request.options).await
 }
 
-/// Download name for mesh jobs: TripoSG exports `triposg.obj`, while the
-/// historical triposr default keeps its `mesh.obj` name for old clients.
-fn mesh_download_filename(model: &str) -> String {
-    if model == "triposg" {
-        "triposg.obj".to_string()
+/// Download name for mesh jobs: TripoSG exports `triposg.<ext>`, while the
+/// historical triposr default keeps its `mesh.<ext>` stem for old clients.
+fn mesh_download_filename(model: &str, format: MeshFormat) -> String {
+    let stem = if model == "triposg" {
+        "triposg"
     } else {
-        "mesh.obj".to_string()
+        "mesh"
+    };
+    format!("{stem}.{}", format.extension())
+}
+
+fn point_cloud_output_format(
+    options: &PointCloudGenerationOptions,
+) -> anyhow::Result<PointCloudFormat> {
+    match options.output_format.as_deref() {
+        Some(format) => PointCloudFormat::from_extension(format).map_err(anyhow::Error::from),
+        None => Ok(PointCloudFormat::Ply),
+    }
+}
+
+fn mesh_output_format(options: &MeshGenerationOptions) -> anyhow::Result<MeshFormat> {
+    match options.output_format.as_deref() {
+        Some(format) => MeshFormat::from_extension(format).map_err(anyhow::Error::from),
+        None => Ok(MeshFormat::Glb),
     }
 }
 
@@ -452,14 +473,15 @@ async fn create_mesh_generation_multipart(
     // Missing `model` keeps the documented `triposr` default; the download
     // name follows the requested model.
     let model = upload.model.unwrap_or_else(|| "triposr".to_string());
-    let download_filename = mesh_download_filename(&model);
+    let format = mesh_output_format(&options)?;
+    let download_filename = mesh_download_filename(&model, format);
 
     let record = create_job_record(NewJobRecord {
         job_id,
         model,
-        output_format: "obj".to_string(),
+        output_format: format.extension().to_string(),
         workspace,
-        content_type: "model/obj".to_string(),
+        content_type: format.content_type().to_string(),
         download_filename,
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: None,
@@ -487,14 +509,15 @@ async fn create_mesh_generation_json(
     )
     .await?;
 
-    let download_filename = mesh_download_filename(&request.model);
+    let format = mesh_output_format(&request.options)?;
+    let download_filename = mesh_download_filename(&request.model, format);
 
     let record = create_job_record(NewJobRecord {
         job_id,
         model: request.model,
-        output_format: "obj".to_string(),
+        output_format: format.extension().to_string(),
         workspace,
-        content_type: "model/obj".to_string(),
+        content_type: format.content_type().to_string(),
         download_filename,
         ttl_secs: state.generation_defaults.job_ttl_secs,
         webhook_url: request.webhook_url,
@@ -539,4 +562,68 @@ pub fn error_response(status: StatusCode, error: anyhow::Error) -> Response {
         },
     });
     (status, body).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mesh_jobs_default_to_glb_and_accept_explicit_formats() {
+        let default = MeshGenerationOptions::default();
+        assert_eq!(mesh_output_format(&default).unwrap(), MeshFormat::Glb);
+        assert_eq!(
+            mesh_download_filename("triposg", MeshFormat::Glb),
+            "triposg.glb"
+        );
+        assert_eq!(
+            mesh_download_filename("triposr", MeshFormat::Glb),
+            "mesh.glb"
+        );
+
+        let obj = MeshGenerationOptions {
+            output_format: Some("obj".to_string()),
+            ..MeshGenerationOptions::default()
+        };
+        assert_eq!(mesh_output_format(&obj).unwrap(), MeshFormat::Obj);
+        assert_eq!(
+            mesh_download_filename("triposr", MeshFormat::Obj),
+            "mesh.obj"
+        );
+
+        let invalid = MeshGenerationOptions {
+            output_format: Some("fbx".to_string()),
+            ..MeshGenerationOptions::default()
+        };
+        assert!(mesh_output_format(&invalid).is_err());
+    }
+
+    #[test]
+    fn point_cloud_jobs_default_to_ply_and_accept_xyz() {
+        let default = PointCloudGenerationOptions::default();
+        assert_eq!(
+            point_cloud_output_format(&default).unwrap(),
+            PointCloudFormat::Ply
+        );
+        assert_eq!(PointCloudFormat::Ply.content_type(), "model/ply");
+
+        let xyz = PointCloudGenerationOptions {
+            output_format: Some("XYZ".to_string()),
+            ..PointCloudGenerationOptions::default()
+        };
+        assert_eq!(
+            point_cloud_output_format(&xyz).unwrap(),
+            PointCloudFormat::Xyz
+        );
+        assert_eq!(
+            PointCloudFormat::Xyz.content_type(),
+            "text/plain; charset=utf-8"
+        );
+
+        let invalid = PointCloudGenerationOptions {
+            output_format: Some("pcd".to_string()),
+            ..PointCloudGenerationOptions::default()
+        };
+        assert!(point_cloud_output_format(&invalid).is_err());
+    }
 }
