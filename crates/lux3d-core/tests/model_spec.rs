@@ -94,7 +94,7 @@ fn pi3_model_spec_is_source_truth_backed() {
     match &spec.export {
         ExportSpec::Pi3(export) => {
             assert_eq!("ply", export.primary_extension);
-            assert!(export.alternate_extensions.is_empty());
+            assert_eq!(export.alternate_extensions, vec!["xyz".to_string()]);
         }
         other => panic!("expected Pi3 export spec, got {other:?}"),
     }
@@ -151,7 +151,7 @@ fn pi3x_model_spec_is_source_truth_backed() {
     match &spec.export {
         ExportSpec::Pi3x(export) => {
             assert_eq!("ply", export.primary_extension);
-            assert!(export.alternate_extensions.is_empty());
+            assert_eq!(export.alternate_extensions, vec!["xyz".to_string()]);
         }
         other => panic!("expected Pi3x export spec, got {other:?}"),
     }
@@ -209,8 +209,11 @@ fn triposr_model_spec_is_source_truth_backed() {
 
     match &spec.export {
         ExportSpec::TripoSr(export) => {
-            assert_eq!("obj", export.primary_extension);
-            assert!(export.alternate_extensions.is_empty());
+            assert_eq!("glb", export.primary_extension);
+            assert_eq!(
+                export.alternate_extensions,
+                vec!["obj".to_string(), "ply".to_string(), "stl".to_string()]
+            );
         }
         other => panic!("expected TripoSR export spec, got {other:?}"),
     }
@@ -290,11 +293,11 @@ fn vggt_model_spec_is_source_truth_backed() {
     match &spec.export {
         ExportSpec::Vggt(export) => {
             assert_eq!("ply", export.primary_extension);
-            assert!(export.alternate_extensions.is_empty());
+            assert_eq!(export.alternate_extensions, vec!["xyz".to_string()]);
             for expected_note in [
                 "world_points_conf > 1.0",
                 "colors from preprocessed RGB frames",
-                "write_ply(points, rgb)",
+                "write_ply(points, rgb); .xyz is a plain-text alternative",
             ] {
                 assert!(
                     export
@@ -460,8 +463,11 @@ fn triposg_model_spec_is_source_truth_backed() {
 
     match &spec.export {
         ExportSpec::TripoSg(export) => {
-            assert_eq!("obj", export.primary_extension);
-            assert!(export.alternate_extensions.is_empty());
+            assert_eq!("glb", export.primary_extension);
+            assert_eq!(
+                export.alternate_extensions,
+                vec!["obj".to_string(), "ply".to_string(), "stl".to_string()]
+            );
             assert!(
                 export
                     .utility_notes

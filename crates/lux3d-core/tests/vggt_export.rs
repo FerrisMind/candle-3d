@@ -2,7 +2,7 @@ use candle_core::{DType, Device, Tensor};
 use lux3d_core::contracts::{
     ExportStage, GeometryStage, ModelFamily, TensorContract, VggtSceneCode,
 };
-use lux3d_core::export::VggtExportStage;
+use lux3d_core::export::{PointCloudFormat, VggtExportStage};
 use lux3d_core::geometry::VggtGeometryStage;
 use lux3d_core::runtime::VggtInferenceOutput;
 
@@ -147,6 +147,25 @@ fn vggt_write_ply_emits_pi3_ascii_format() {
 }
 
 #[test]
+fn vggt_write_point_cloud_dispatches_xyz() {
+    let output = synthetic_output();
+    let point_cloud = VggtGeometryStage
+        .assemble_cpu(&output, 1.0)
+        .expect("vggt cpu point cloud");
+    let path = std::env::temp_dir().join(format!("lux3d-vggt-export-{}.xyz", std::process::id()));
+    assert_eq!(
+        VggtExportStage
+            .write_point_cloud(&point_cloud, &path)
+            .expect("write vggt xyz"),
+        PointCloudFormat::Xyz
+    );
+
+    let contents = std::fs::read_to_string(&path).expect("read vggt xyz");
+    std::fs::remove_file(&path).expect("remove vggt xyz");
+    assert_eq!(contents, "1 2 3 255 0 128\n7 8 9 0 255 128\n");
+}
+
+#[test]
 fn vggt_export_plan_documents_demo_export() {
     let scene = synthetic_scene();
     let point_cloud = VggtGeometryStage
@@ -157,13 +176,13 @@ fn vggt_export_plan_documents_demo_export() {
         .expect("vggt export plan");
 
     assert_eq!(plan.primary_extension, "ply");
-    assert!(plan.alternate_extensions.is_empty());
+    assert_eq!(plan.alternate_extensions, vec!["xyz".to_string()]);
     assert_eq!(
         plan.utility_notes,
         vec![
             "world_points_conf > 1.0".to_string(),
             "colors from preprocessed RGB frames".to_string(),
-            "write_ply(points, rgb)".to_string(),
+            "write_ply(points, rgb); .xyz is a plain-text alternative".to_string(),
         ]
     );
 }

@@ -261,8 +261,8 @@ cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <i
 # Pi3X VO -> PLY с явной директорией canonical package в layout как 3d/canonical-weights/pi3x
 cargo run -p lux3d-cli -- run pi3x --model-path <canonical-pi3x-dir> --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
 
-# TripoSR -> OBJ с явной директорией canonical package в layout как 3d/canonical-weights/triposr
-cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+# TripoSR -> GLB с явной директорией canonical package в layout как 3d/canonical-weights/triposr
+cargo run -p lux3d-cli -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.glb>
 
 # VGGT -> PLY (world points фильтруются по confidence > 1.0 по умолчанию)
 cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <input-sequence> --output <output-file.ply>
@@ -270,26 +270,28 @@ cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <i
 # Автоскачивание canonical package VGGT (oxide-lab/VGGT-1B)
 cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
-# TripoSG -> OBJ (по умолчанию: 50 rectified-flow шагов, CFG 7.0, seed 42, flash decoder depth 9)
-cargo run -p lux3d-cli --features cuda -- run triposg --rmbg-model-path <canonical-rmbg-dir> --model-path <canonical-triposg-dir> --source <input-image> --output <output-file.obj>
+# TripoSG -> GLB (по умолчанию: 50 rectified-flow шагов, CFG 7.0, seed 42, flash decoder depth 9)
+cargo run -p lux3d-cli --features cuda -- run triposg --rmbg-model-path <canonical-rmbg-dir> --model-path <canonical-triposg-dir> --source <input-image> --output <output-file.glb>
 # Flash decoder включён по умолчанию; отключить и вернуться к dense/hierarchical MC:
-cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --flash-decoder false --dense-octree-depth 8 --hierarchical-octree-depth 9 --output <output-file.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --flash-decoder false --dense-octree-depth 8 --hierarchical-octree-depth 9 --output <output-file.glb>
 # Быстрый preview: 2 шага, flash depth 5
-cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --steps 2 --flash-decoder true --flash-octree-depth 5 --output <preview.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --steps 2 --flash-decoder true --flash-octree-depth 5 --output <preview.glb>
 
 # Автоскачивание canonical package TripoSG (oxide-lab/TripoSG); RMBG 1.4 — отдельный пакет
-cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.glb>
 
 # Автоскачивание canonical packages из Hugging Face в пользовательский cache
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
+**Форматы вывода:** mesh-команды (`triposr`, `triposg`) выбирают writer по расширению: `.glb` (основной/по умолчанию), `.obj`, `.ply`, `.stl`. Point-cloud команды (`pi3`, `pi3x`, `vggt`) — `.ply` (основной) или `.xyz`. HTTP mesh API по умолчанию отдаёт GLB, point-cloud API — PLY; формат задаётся `options.output_format` (`glb`/`obj`/`ply`/`stl` и `ply`/`xyz` соответственно).
+
 > **Экспериментальные бэкенды (Vulkan / WGPU):** выбор устройства через `--device`:
 >
 > ```powershell
-> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
+> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.glb>
 > cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
-> cargo run -p lux3d-cli --features vulkan -- run triposg --device vulkan --source <input-image> --steps 2 --num-tokens 1024 --flash-octree-depth 5 --output <preview.obj>
+> cargo run -p lux3d-cli --features vulkan -- run triposg --device vulkan --source <input-image> --steps 2 --num-tokens 1024 --flash-octree-depth 5 --output <preview.glb>
 > ```
 >
 > Эти пути экспериментальные и не проверяются в CI. Инференс может работать нестабильно, выдавать некорректный результат или вовсе не запускаться в зависимости от GPU, драйвера и ОС. Для продакшена используй CUDA.

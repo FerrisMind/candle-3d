@@ -265,8 +265,8 @@ cargo run -p lux3d-cli --features cuda -- run pi3x --model-path <canonical-pi3x-
 # Pi3X VO -> PLY with an explicit canonical package directory (layout matches 3d/canonical-weights/pi3x)
 cargo run -p lux3d-cli --features cuda -- run pi3x --model-path <canonical-pi3x-dir> --source <input-video> --vo --chunk-size 8 --overlap 4 --conf-threshold 0.05 --inject-condition pose,depth,ray --output <output-file.ply>
 
-# TripoSR -> OBJ with an explicit canonical package directory (layout matches 3d/canonical-weights/triposr)
-cargo run -p lux3d-cli --features cuda -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.obj>
+# TripoSR -> GLB with an explicit canonical package directory (layout matches 3d/canonical-weights/triposr)
+cargo run -p lux3d-cli --features cuda -- run triposr --model-path <canonical-triposr-dir> --source <input-image> --mc-resolution 256 --mc-threshold 25.0 --output <output-file.glb>
 
 # VGGT -> PLY (world points filtered by confidence > 1.0 by default)
 cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <input-sequence> --output <output-file.ply>
@@ -274,26 +274,28 @@ cargo run -p lux3d-cli -- run vggt --model-path <canonical-vggt-dir> --source <i
 # VGGT canonical package auto-download (oxide-lab/VGGT-1B)
 cargo run -p lux3d-cli -- run vggt --source <input-sequence> --output <output-file.ply>
 
-# TripoSG -> OBJ (defaults: 50 rectified-flow steps, CFG 7.0, seed 42, flash decoder depth 9)
-cargo run -p lux3d-cli --features cuda -- run triposg --rmbg-model-path <canonical-rmbg-dir> --model-path <canonical-triposg-dir> --source <input-image> --output <output-file.obj>
+# TripoSG -> GLB (defaults: 50 rectified-flow steps, CFG 7.0, seed 42, flash decoder depth 9)
+cargo run -p lux3d-cli --features cuda -- run triposg --rmbg-model-path <canonical-rmbg-dir> --model-path <canonical-triposg-dir> --source <input-image> --output <output-file.glb>
 # Flash decoder is the reference default; disable it for dense/hierarchical marching cubes:
-cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --flash-decoder false --dense-octree-depth 8 --hierarchical-octree-depth 9 --output <output-file.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --flash-decoder false --dense-octree-depth 8 --hierarchical-octree-depth 9 --output <output-file.glb>
 # Faster preview: 2 steps, flash depth 5
-cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --steps 2 --flash-decoder true --flash-octree-depth 5 --output <preview.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-triposg-dir> --source <input-image> --steps 2 --flash-decoder true --flash-octree-depth 5 --output <preview.glb>
 
 # TripoSG canonical package auto-download (oxide-lab/TripoSG); RMBG 1.4 is a separate package
-cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.obj>
+cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.glb>
 
 # Auto-download canonical packages from Hugging Face into the user cache
 cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
+**Output formats:** mesh commands (`triposr`, `triposg`) select the writer from the output extension: `.glb` (primary/default), `.obj`, `.ply`, `.stl`. Point-cloud commands (`pi3`, `pi3x`, `vggt`) use `.ply` (primary) or `.xyz`. The HTTP mesh API defaults to GLB and accepts `options.output_format`; the point-cloud API defaults to PLY and accepts `options.output_format` (`ply`/`xyz`).
+
 > **Experimental backends (Vulkan / WGPU):** select a non-CUDA device with `--device`:
 >
 > ```powershell
-> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.obj>
+> cargo run -p lux3d-cli --features vulkan -- run triposr --device vulkan --source <input-image> --output <output-file.glb>
 > cargo run -p lux3d-cli --features wgpu -- run pi3 --device wgpu --source <input-sequence> --output <output-file.ply>
-> cargo run -p lux3d-cli --features vulkan -- run triposg --device vulkan --source <input-image> --steps 2 --num-tokens 1024 --flash-octree-depth 5 --output <preview.obj>
+> cargo run -p lux3d-cli --features vulkan -- run triposg --device vulkan --source <input-image> --steps 2 --num-tokens 1024 --flash-octree-depth 5 --output <preview.glb>
 > ```
 >
 > These paths are experimental and not verified in CI. Inference may be unstable, produce incorrect output, or fail entirely depending on your GPU, driver, and OS. Use CUDA for production workloads.
@@ -314,14 +316,14 @@ Generation endpoints accept `multipart/form-data` and return `202 Accepted` with
 | Endpoint | Models | Output |
 |----------|--------|--------|
 | `POST /v1/point-clouds/generations` | `pi3`, `pi3x`, `vggt` | PLY |
-| `POST /v1/meshes/generations` | `triposr`, `triposg` | OBJ |
+| `POST /v1/meshes/generations` | `triposr`, `triposg` | GLB |
 
 Common fields:
 
 - `model` — required for point clouds (`pi3`, `pi3x`, or `vggt`), optional for meshes (`triposr` default; set `triposg` for TripoSG)
 - `source` — required upload (`.zip` frame archive, `.mp4` video, or image)
 - `conditions` — optional Pi3X conditions file
-- `options` — optional JSON string with family-specific parameters (TripoSG: `steps`, `guidance_scale`, `seed`, `num_tokens`, `use_flash_decoder`, `flash_octree_depth`, `dense_octree_depth`, `hierarchical_octree_depth`, `query_chunk_size`)
+- `options` — optional JSON string with family-specific parameters (TripoSG: `steps`, `guidance_scale`, `seed`, `num_tokens`, `use_flash_decoder`, `flash_octree_depth`, `dense_octree_depth`, `hierarchical_octree_depth`, `query_chunk_size`, `output_format` (`glb` default, `obj`, `ply`, `stl`); point clouds: `output_format` (`ply` default, `xyz`), plus `interval`, `vo`, `chunk_size`, `overlap`, `conf_threshold`, `inject_condition`)
 
 Workflow:
 
@@ -332,7 +334,7 @@ curl -X POST http://127.0.0.1:8080/v1/meshes/generations `
   -F "source=@input.png" `
   -F "options={\"mc_resolution\":256,\"mc_threshold\":25.0}"
 
-# TripoSG job (completed downloads as triposg.obj)
+# TripoSG job (completed downloads as triposg.glb)
 curl -X POST http://127.0.0.1:8080/v1/meshes/generations `
   -F "model=triposg" `
   -F "source=@input.png" `
@@ -342,7 +344,7 @@ curl -X POST http://127.0.0.1:8080/v1/meshes/generations `
 curl http://127.0.0.1:8080/v1/generations/gen_...
 
 # 3. Download completed asset
-curl http://127.0.0.1:8080/v1/generations/gen_.../content --output mesh.obj
+curl http://127.0.0.1:8080/v1/generations/gen_.../content --output mesh.glb
 ```
 
 Embed the router in another Axum app:

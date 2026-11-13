@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use candle_core::{DType, Device, IndexOp};
 use image::{DynamicImage, Rgba, RgbaImage};
 use lux3d_core::ModelFamily;
+use lux3d_core::export::MeshFormat;
 use lux3d_core::runtime::TripoSrPipeline;
 use lux3d_core::test_support::{GpuTestLock, model_asset_options, runtime_root};
 use serde_json::Value;
@@ -561,6 +562,23 @@ fn triposr_export_obj_serializes_mesh_buffers_consistently() {
     assert_eq!(lines[1], expected[0]);
     assert_eq!(lines[1 + expected.len() / 2], expected[expected.len() / 2]);
     assert_eq!(lines[expected.len()], expected[expected.len() - 1]);
+
+    let glb_path =
+        std::env::temp_dir().join(format!("lux3d-triposr-export-{}.glb", std::process::id()));
+    assert_eq!(
+        pipeline.export_mesh(&mesh, &glb_path).expect("export glb"),
+        MeshFormat::Glb
+    );
+    let glb = fs::read(&glb_path).expect("read exported glb");
+    let _ = fs::remove_file(&glb_path);
+    assert_eq!(&glb[..4], b"glTF");
+    let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+    let json: Value = serde_json::from_slice(&glb[20..20 + json_len]).expect("glb json");
+    assert_eq!(
+        json["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"],
+        1
+    );
+    assert_eq!(json["accessors"][0]["count"], mesh.vertices.dims()[0]);
 }
 
 #[test]

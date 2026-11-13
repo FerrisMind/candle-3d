@@ -21,6 +21,7 @@ use candle_core::{DType, Device, Tensor};
 use lux3d_core::{
     ModelFamily,
     error::Lux3dError,
+    export::MeshFormat,
     runtime::{TripoSgPipeline, TripoSgRunOptions},
     test_support::{GpuTestLock, model_asset_options, runtime_root},
 };
@@ -329,6 +330,23 @@ fn pipeline_mesh_and_export_smoke() {
         body.len(),
         obj_path.display()
     );
+
+    let glb_path = out_dir.join("mesh.glb");
+    assert_eq!(
+        pipeline.export_mesh(&mesh, &glb_path).expect("glb export"),
+        MeshFormat::Glb
+    );
+    let glb = std::fs::read(&glb_path).expect("glb read");
+    assert_eq!(&glb[..4], b"glTF", "GLB magic");
+    let json_len = u32::from_le_bytes(glb[12..16].try_into().expect("glb json length")) as usize;
+    let json: serde_json::Value =
+        serde_json::from_slice(&glb[20..20 + json_len]).expect("glb json");
+    assert_eq!(
+        json["meshes"][0]["primitives"][0]["attributes"]["POSITION"],
+        0
+    );
+    assert_eq!(json["accessors"][0]["count"], vertex_count);
+    assert_eq!(json["accessors"][1]["count"], face_count * 3);
 
     let _ = std::fs::remove_dir_all(&out_dir);
 }
