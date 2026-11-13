@@ -33,14 +33,10 @@
 
 use std::sync::OnceLock;
 
+use super::nn_blocks::{Linear, linear_dense as linear, linear_no_bias_dense as linear_no_bias};
+use crate::weights::VarBuilder;
 use candle_core::{D, DType, Device, Result as CandleResult, Tensor};
 use candle_nn::{LayerNorm, Module, layer_norm};
-use crate::weights::VarBuilder;
-use super::nn_blocks::{
-    Linear,
-    linear_dense as linear,
-    linear_no_bias_dense as linear_no_bias,
-};
 
 use super::attention_math::{exact_query_chunked_sdpa, exact_sdpa_heads};
 
@@ -241,7 +237,7 @@ impl TripoSgDiT {
         }
 
         // Timestep token: [B, 1, width].
-        let temb = self.timestep_embedding(timestep, latents.device())?;
+        let temb = self.timestep_embedding(timestep, latents.device(), latents.dtype())?;
         let temb = temb
             .reshape((1, 1, self.cfg.width))?
             .broadcast_as((batch, 1, self.cfg.width))?
@@ -281,7 +277,12 @@ impl TripoSgDiT {
 
     /// diffusers `Timesteps(width, flip_sin_to_cos=False, shift=0)` ->
     /// `TimestepEmbedding` MLP: `[width]` vector, sin FIRST concat.
-    fn timestep_embedding(&self, timestep: f32, device: &Device) -> CandleResult<Tensor> {
+    fn timestep_embedding(
+        &self,
+        timestep: f32,
+        device: &Device,
+        dtype: DType,
+    ) -> CandleResult<Tensor> {
         let half = self.cfg.width / 2;
         let mut emb = Vec::with_capacity(half);
         let log_max_period = -(10000.0f32).ln();
@@ -290,6 +291,7 @@ impl TripoSgDiT {
             emb.push(timestep * freq);
         }
         let emb = Tensor::from_vec(emb, (1, half), device)?;
+        let emb = emb.to_dtype(dtype)?;
         let sin = emb.sin()?;
         let cos = emb.cos()?;
         let projected = Tensor::cat(&[&sin, &cos], D::Minus1)?; // [1, width]
@@ -594,9 +596,23 @@ pub fn denoise(
     steps: usize,
     guidance: f32,
 ) -> CandleResult<Tensor> {
+    denoise_with_dtype(dit, latents_init, cond, steps, guidance, DType::F32)
+}
+
+/// [`denoise`] with an explicit compute dtype. The network runs in `dtype`;
+/// the Euler update stays in F32 (`RectifiedFlowScheduler.step` contract) and
+/// is cast back for the next network pass. The returned latents are F32.
+pub fn denoise_with_dtype(
+    dit: &TripoSgDiT,
+    latents_init: &Tensor,
+    cond: &Tensor,
+    steps: usize,
+    guidance: f32,
+    dtype: DType,
+) -> CandleResult<Tensor> {
     let scheduler = RectifiedFlowSchedule::new(steps, 1.0);
-    let latents_init = latents_init.to_dtype(DType::F32)?;
-    let cond = cond.to_dtype(DType::F32)?;
+    let latents_init = latents_init.to_dtype(dtype)?;
+    let cond = cond.to_dtype(dtype)?;
     let uncond_cond = Tensor::zeros_like(&cond)?;
     let mut latents = latents_init;
     for index in 0..steps {
@@ -606,7 +622,9 @@ pub fn denoise(
         let parts = velocity.chunk(2, 0)?;
         // v = v_uncond + guidance * (v_cond - v_uncond), batch 0 = uncond.
         let combined = (&parts[0] + (&parts[1] - &parts[0])?.affine(guidance as f64, 0.0)?)?;
-        latents = scheduler.step(index, &combined, &latents)?;
+        latents = scheduler
+            .step(index, &combined, &latents)?
+            .to_dtype(dtype)?;
     }
-    Ok(latents)
+    latents.to_dtype(DType::F32)
 }

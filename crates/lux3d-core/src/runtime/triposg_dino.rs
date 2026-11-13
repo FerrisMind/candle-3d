@@ -14,13 +14,10 @@
 //! grid (16x16 for the 224 input) in F32, with the CLS row prepended
 //! unchanged.
 
+use super::nn_blocks::{Linear, linear_dense as linear};
+use crate::weights::VarBuilder;
 use candle_core::{DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{Conv2d, Conv2dConfig, LayerNorm, Module, conv2d, layer_norm};
-use crate::weights::VarBuilder;
-use super::nn_blocks::{
-    Linear,
-    linear_dense as linear,
-};
 
 use super::{attention_math::exact_sdpa_heads, triposr::resize_patch_pos_embed_bicubic};
 
@@ -188,7 +185,8 @@ impl TripoSgDinoEncoder {
             .to_vec1::<f32>()?;
         let resized = resize_patch_pos_embed_bicubic(&flat, source, grid_h, grid_w, hidden);
         let resized = Tensor::from_vec(resized, (1, grid_h * grid_w, hidden), &Device::Cpu)?
-            .to_device(device)?;
+            .to_device(device)?
+            .to_dtype(self.position_embeddings.dtype())?;
         Tensor::cat(&[&cls, &resized], 1)
     }
 }

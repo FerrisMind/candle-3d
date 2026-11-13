@@ -1,9 +1,9 @@
 use std::{path::Path, sync::Arc};
 
-use candle_core::{D, DType, Device, IndexOp, Module, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, layer_norm};
 use super::nn_blocks::Linear;
 use crate::weights::VarBuilder;
+use candle_core::{D, DType, Device, IndexOp, Module, Result as CandleResult, Tensor};
+use candle_nn::{LayerNorm, layer_norm};
 
 use super::{
     attention_math::{
@@ -76,6 +76,10 @@ pub struct VggtPipeline {
     pub neural: VggtNeuralStage,
     pub geometry: VggtGeometryStage,
     pub export: VggtExportStage,
+    /// Weight/activation dtype for the neural network. Public API outputs are
+    /// always converted back to F32; F16 is an inference-time storage/compute
+    /// mode.
+    dtype: DType,
     bundle_cache: Arc<DeviceLocalCache<VggtModelBundle>>,
 }
 
@@ -514,9 +518,9 @@ struct VggtModelBundle {
 }
 
 impl VggtModelBundle {
-    fn load(weights: &CanonicalWeightSetPaths, device: &Device) -> Result<Self> {
+    fn load(weights: &CanonicalWeightSetPaths, device: &Device, dtype: DType) -> Result<Self> {
         let vb = unsafe {
-            weights.var_builder(DType::F32, device).map_err(|source| {
+            weights.var_builder(dtype, device).map_err(|source| {
                 Lux3dError::CanonicalWeightsValidation {
                     message: format!("failed to open VGGT canonical weights: {source}"),
                 }
@@ -561,19 +565,28 @@ impl VggtModelBundle {
 
 impl VggtPipeline {
     pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
+        Self::load_with_dtype(model_assets, DType::F32)
+    }
+
+    /// Load VGGT with an explicit neural-network dtype. `F32` is the default
+    /// reference mode; `F16` halves weight memory and runs the aggregator,
+    /// camera head and DPT heads in half precision on CUDA/Vulkan/WGPU.
+    pub fn load_with_dtype(model_assets: ModelAssetOptions, dtype: DType) -> Result<Self> {
         Ok(Self {
             weights: load_canonical_weights(ModelFamily::Vggt, model_assets)?,
             preprocess: VggtPreprocessStage::default(),
             neural: VggtNeuralStage,
             geometry: Default::default(),
             export: Default::default(),
+            dtype,
             bundle_cache: Arc::default(),
         })
     }
 
     fn bundle_for(&self, device: &Device) -> Result<Arc<VggtModelBundle>> {
-        self.bundle_cache
-            .get_or_try_init(device, || VggtModelBundle::load(&self.weights, device))
+        self.bundle_cache.get_or_try_init(device, || {
+            VggtModelBundle::load(&self.weights, device, self.dtype)
+        })
     }
 
     pub fn prepare_inputs_from_path(
@@ -618,11 +631,7 @@ impl VggtPipeline {
 
     /// Dump the raw inference tensors as `.npz` so a quantized run can be
     /// compared against the float run (Chamfer / PSNR / camera-pose AUC).
-    pub fn export_inference_npz(
-        &self,
-        output: &VggtInferenceOutput,
-        path: &Path,
-    ) -> Result<()> {
+    pub fn export_inference_npz(&self, output: &VggtInferenceOutput, path: &Path) -> Result<()> {
         use ndarray::{ArrayD, IxDyn};
 
         let file = std::fs::File::create(path).map_err(|source| Lux3dError::ModelAssetIo {
@@ -686,12 +695,22 @@ impl VggtPipeline {
     }
 
     pub fn run_aggregator(&self, prepared: &VggtPreparedInputs) -> Result<VggtAggregatorOutput> {
-        let device = prepared.normalized_frames.device();
+        let normalized_frames =
+            prepared
+                .normalized_frames
+                .to_dtype(self.dtype)
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!(
+                        "failed to convert VGGT input to {dtype:?}: {source}",
+                        dtype = self.dtype
+                    ),
+                })?;
+        let device = normalized_frames.device();
         let bundle = self.bundle_for(device)?;
-        let (batch, frames, _channels, height, width) = input_dims(&prepared.normalized_frames)?;
+        let (batch, frames, _channels, height, width) = input_dims(&normalized_frames)?;
         let patch_tokens = bundle
             .aggregator
-            .encode_patch_tokens(&prepared.normalized_frames)
+            .encode_patch_tokens(&normalized_frames)
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("VGGT encoder forward failed: {source}"),
             })?;
@@ -718,9 +737,19 @@ impl VggtPipeline {
         prepared: &VggtPreparedInputs,
         capture_taps: bool,
     ) -> Result<(VggtInferenceOutput, Option<VggtDebugTaps>)> {
-        let device = prepared.normalized_frames.device();
+        let normalized_frames =
+            prepared
+                .normalized_frames
+                .to_dtype(self.dtype)
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!(
+                        "failed to convert VGGT input to {dtype:?}: {source}",
+                        dtype = self.dtype
+                    ),
+                })?;
+        let device = normalized_frames.device();
         let bundle = self.bundle_for(device)?;
-        let (batch, frames, _channels, height, width) = input_dims(&prepared.normalized_frames)?;
+        let (batch, frames, _channels, height, width) = input_dims(&normalized_frames)?;
         let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
         let stage = |name: &str, t: &std::time::Instant| {
             if stage_time {
@@ -731,7 +760,7 @@ impl VggtPipeline {
         let t = std::time::Instant::now();
         let patch_tokens = bundle
             .aggregator
-            .encode_patch_tokens(&prepared.normalized_frames)
+            .encode_patch_tokens(&normalized_frames)
             .map_err(|source| Lux3dError::CanonicalWeightsValidation {
                 message: format!("VGGT encoder forward failed: {source}"),
             })?;
@@ -849,15 +878,24 @@ impl VggtPipeline {
             None
         };
 
+        // Public tensors stay F32 regardless of the internal compute dtype so
+        // geometry/export code and callers keep the historical contract.
+        let to_f32 = |tensor: &Tensor| -> Result<Tensor> {
+            tensor
+                .to_dtype(DType::F32)
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!("failed to convert VGGT output to f32: {source}"),
+                })
+        };
         Ok((
             VggtInferenceOutput {
-                world_points,
-                world_points_conf,
-                depth,
-                depth_conf,
-                pose_enc,
-                extrinsics,
-                intrinsics,
+                world_points: to_f32(&world_points)?,
+                world_points_conf: to_f32(&world_points_conf)?,
+                depth: to_f32(&depth)?,
+                depth_conf: to_f32(&depth_conf)?,
+                pose_enc: to_f32(&pose_enc)?,
+                extrinsics: to_f32(&extrinsics)?,
+                intrinsics: to_f32(&intrinsics)?,
                 rgb_frames: prepared.rgb_frames.clone(),
                 export_mask,
             },

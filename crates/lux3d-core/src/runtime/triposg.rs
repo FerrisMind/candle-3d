@@ -33,7 +33,7 @@ use candle_core::{DType, Device, Tensor};
 use super::{
     DeviceLocalCache, RmbgConfig, RmbgModel,
     triposg_dino::TripoSgDinoEncoder,
-    triposg_dit::{TripoSgDiT, denoise},
+    triposg_dit::{TripoSgDiT, denoise_with_dtype},
     triposg_field::hierarchical_sdf_grid,
     triposg_flash::{compact_dmc_mesh, flash_dual_marching_cubes, flash_sdf_grid},
     triposg_vae::{
@@ -208,12 +208,12 @@ struct TripoSgModelBundle {
 }
 
 impl TripoSgModelBundle {
-    fn load(weights: &CanonicalWeightSetPaths, device: &Device) -> Result<Self> {
+    fn load(weights: &CanonicalWeightSetPaths, device: &Device, dtype: DType) -> Result<Self> {
         // SAFETY: the canonical safetensors file is read-only and the mmap
         // stays alive through the VarBuilder's 'static borrow for the bundle's
         // lifetime (same pattern as TripoSR).
         let vb = unsafe {
-            weights.var_builder(DType::F32, device).map_err(|source| {
+            weights.var_builder(dtype, device).map_err(|source| {
                 Lux3dError::CanonicalWeightsValidation {
                     message: format!("failed to open TripoSG canonical weights: {source}"),
                 }
@@ -268,6 +268,9 @@ pub struct TripoSgPipeline {
     pub neural: TripoSgNeuralStage,
     pub geometry: TripoSgGeometryStage,
     pub export: TripoSgExportStage,
+    /// Weight/activation dtype for DINOv2, DiT and the VAE. Public outputs
+    /// are converted back to F32; `F16` is an inference-time mode.
+    dtype: DType,
     bundle_cache: Arc<DeviceLocalCache<TripoSgModelBundle>>,
     rmbg_cache: Arc<DeviceLocalCache<RmbgModel>>,
 }
@@ -275,6 +278,13 @@ pub struct TripoSgPipeline {
 impl TripoSgPipeline {
     pub fn load(model_assets: ModelAssetOptions) -> Result<Self> {
         Self::load_with_rmbg(model_assets, None)
+    }
+
+    /// Load TripoSG with an explicit neural-network dtype. `F32` is the
+    /// default reference mode; `F16` halves weight memory for the DINOv2,
+    /// DiT and VAE submodels on CUDA/Vulkan/WGPU.
+    pub fn load_with_dtype(model_assets: ModelAssetOptions, dtype: DType) -> Result<Self> {
+        Self::load_with_rmbg_and_dtype(model_assets, None, dtype)
     }
 
     /// Load TripoSG plus an optional separate RMBG-1.4 canonical package.
@@ -288,6 +298,14 @@ impl TripoSgPipeline {
         model_assets: ModelAssetOptions,
         rmbg_model_dir: Option<std::path::PathBuf>,
     ) -> Result<Self> {
+        Self::load_with_rmbg_and_dtype(model_assets, rmbg_model_dir, DType::F32)
+    }
+
+    pub fn load_with_rmbg_and_dtype(
+        model_assets: ModelAssetOptions,
+        rmbg_model_dir: Option<std::path::PathBuf>,
+        dtype: DType,
+    ) -> Result<Self> {
         let rmbg_weights = match rmbg_model_dir {
             Some(dir) => Some(load_auxiliary_canonical_weights(dir, "rmbg")?),
             None => None,
@@ -299,14 +317,16 @@ impl TripoSgPipeline {
             neural: TripoSgNeuralStage,
             geometry: TripoSgGeometryStage,
             export: TripoSgExportStage,
+            dtype,
             bundle_cache: Arc::default(),
             rmbg_cache: Arc::default(),
         })
     }
 
     fn bundle_for(&self, device: &Device) -> Result<Arc<TripoSgModelBundle>> {
-        self.bundle_cache
-            .get_or_try_init(device, || TripoSgModelBundle::load(&self.weights, device))
+        self.bundle_cache.get_or_try_init(device, || {
+            TripoSgModelBundle::load(&self.weights, device, self.dtype)
+        })
     }
 
     fn rmbg_for(&self, device: &Device) -> Result<Option<Arc<RmbgModel>>> {
@@ -396,11 +416,23 @@ impl TripoSgPipeline {
     /// `[B, 3, 224, 224]` pixel values.
     pub fn image_embeds(&self, pixel_values: &Tensor) -> Result<Tensor> {
         let bundle = self.bundle_for(pixel_values.device())?;
-        bundle
-            .dino
-            .forward(pixel_values)
-            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+        let pixel_values = pixel_values.to_dtype(self.dtype).map_err(|source| {
+            Lux3dError::CanonicalWeightsValidation {
+                message: format!(
+                    "failed to convert TripoSG image input to {dtype:?}: {source}",
+                    dtype = self.dtype
+                ),
+            }
+        })?;
+        let embeds = bundle.dino.forward(&pixel_values).map_err(|source| {
+            Lux3dError::CanonicalWeightsValidation {
                 message: format!("TripoSG image encoder forward failed: {source}"),
+            }
+        })?;
+        embeds
+            .to_dtype(DType::F32)
+            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                message: format!("failed to convert TripoSG image embeds to f32: {source}"),
             })
     }
 
@@ -433,12 +465,13 @@ impl TripoSgPipeline {
         options.validate()?;
         Self::validate_latents(latents_init, options.num_tokens)?;
         let bundle = self.bundle_for(latents_init.device())?;
-        denoise(
+        denoise_with_dtype(
             &bundle.dit,
             latents_init,
             image_embeds,
             options.steps,
             options.guidance_scale,
+            self.dtype,
         )
         .map_err(|source| Lux3dError::CanonicalWeightsValidation {
             message: format!("TripoSG denoise failed: {source}"),
@@ -527,12 +560,20 @@ impl TripoSgPipeline {
         options.validate()?;
         Self::validate_latents(latents, options.num_tokens)?;
         let bundle = self.bundle_for(latents.device())?;
+        let latents = latents.to_dtype(self.dtype).map_err(|source| {
+            Lux3dError::CanonicalWeightsValidation {
+                message: format!(
+                    "failed to convert TripoSG latents to {dtype:?}: {source}",
+                    dtype = self.dtype
+                ),
+            }
+        })?;
         let mesh_cpu = if options.use_flash_decoder {
             // Reference default (`use_flash_decoder=True`): hierarchical
             // flash SDF query schedule + clean-room DiffDMC.
             let grid = flash_sdf_grid(
                 &bundle.vae,
-                latents,
+                &latents,
                 CANONICAL_BOUNDS,
                 options.flash_octree_depth,
                 options.query_chunk_size,
@@ -559,7 +600,7 @@ impl TripoSgPipeline {
         } else {
             let grid = hierarchical_sdf_grid(
                 &bundle.vae,
-                latents,
+                &latents,
                 CANONICAL_BOUNDS,
                 options.dense_octree_depth,
                 options.hierarchical_octree_depth,

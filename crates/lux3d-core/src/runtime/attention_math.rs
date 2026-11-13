@@ -110,8 +110,11 @@ fn rope_apply(tokens: &Tensor, embeddings: &RopeEmbeddings) -> CandleResult<Tens
     let x2 = tokens.i((.., .., .., (half + quarter)..))?;
     let x1 = tokens.i((.., .., .., half..(half + quarter)))?;
     let pairs_rot = Tensor::cat(&[&y2, &y1, &x2, &x1], D::Minus1)?;
-    tokens.broadcast_mul(&embeddings.cos_full)?
-        + pairs_rot.broadcast_mul(&embeddings.sin_alt_full)?
+    // Tables are built in F32; the fused path is F32-only, so the composed
+    // path also serves F16/BF16 activations by casting the tables.
+    let cos = embeddings.cos_full.to_dtype(tokens.dtype())?;
+    let sin = embeddings.sin_alt_full.to_dtype(tokens.dtype())?;
+    tokens.broadcast_mul(&cos)? + pairs_rot.broadcast_mul(&sin)?
 }
 
 /// LayerNorm(+affine) -> rope in ONE dispatch on vulkan/wgpu

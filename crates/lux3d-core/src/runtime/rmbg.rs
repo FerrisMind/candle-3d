@@ -21,9 +21,9 @@
 //! read. Everything stays F32; `candle_nn` maps all operations onto the
 //! selected backend.
 
+use crate::weights::VarBuilder;
 use candle_core::{Result as CandleResult, Tensor};
 use candle_nn::{BatchNorm, Conv2d, Conv2dConfig, Module, ModuleT, batch_norm, conv2d};
-use crate::weights::VarBuilder;
 
 /// RMBG model configuration (the checkpoint only stores the channel counts).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,7 +423,8 @@ fn max_pool_ceil(input: &Tensor) -> CandleResult<Tensor> {
             f32::NEG_INFINITY,
             (batch, channels, 1, width),
             input.device(),
-        )?;
+        )?
+        .to_dtype(input.dtype())?;
         padded = Tensor::cat(&[&padded, &row], 2)?;
     }
     if width % 2 == 1 {
@@ -431,7 +432,8 @@ fn max_pool_ceil(input: &Tensor) -> CandleResult<Tensor> {
             f32::NEG_INFINITY,
             (batch, channels, padded.dim(2)?, 1),
             input.device(),
-        )?;
+        )?
+        .to_dtype(input.dtype())?;
         padded = Tensor::cat(&[&padded, &column], 3)?;
     }
     padded.max_pool2d_with_stride(2, 2)

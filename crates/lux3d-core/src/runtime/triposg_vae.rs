@@ -31,14 +31,10 @@
 //! (`exact_query_chunked_sdpa`, bounded by `LUX3D_TRIPOSG_ATTN_CHUNK` and the
 //! shared SDPA score budget).
 
-use candle_core::{D, Result as CandleResult, Tensor};
-use candle_nn::{LayerNorm, Module, layer_norm};
+use super::nn_blocks::{Linear, linear_dense as linear, linear_no_bias_dense as linear_no_bias};
 use crate::weights::VarBuilder;
-use super::nn_blocks::{
-    Linear,
-    linear_dense as linear,
-    linear_no_bias_dense as linear_no_bias,
-};
+use candle_core::{D, DType, Result as CandleResult, Tensor};
+use candle_nn::{LayerNorm, Module, layer_norm};
 
 use super::attention_math::exact_query_chunked_sdpa;
 
@@ -307,6 +303,9 @@ impl TripoSgVaeDecoder {
         // chunk from the same cache).
         let (k_heads, v_heads) = self.cross_block.attn2.prepare_kv(kv_cache)?;
 
+        // The query points arrive as F32 host-side coordinates; the decoder
+        // may be loaded in F16. Keep the whole query path in the cache dtype.
+        let points = points.to_dtype(kv_cache.dtype())?;
         let num_points = points.dim(0)?;
         let step = chunk.max(1);
         let mut chunks = Vec::new();
@@ -346,7 +345,8 @@ impl TripoSgVaeDecoder {
             chunks.push(logits.flatten_all()?.affine(-1.0, 0.0)?);
             start += len;
         }
-        Tensor::cat(&chunks, 0)
+        // SDF values feed host-side marching cubes; keep the public output F32.
+        Tensor::cat(&chunks, 0)?.to_dtype(DType::F32)
     }
 
     /// One-shot decode: `kv_cache(latents)` then `decode_points`.
@@ -379,7 +379,8 @@ impl TripoSgVaeDecoder {
                 f
             });
         }
-        let freqs = Tensor::from_vec(freqs, (1, 1, num_freqs), points.device())?;
+        let freqs = Tensor::from_vec(freqs, (1, 1, num_freqs), points.device())?
+            .to_dtype(points.dtype())?;
         let products = points
             .reshape((rows, cols, 1))?
             .broadcast_mul(&freqs)?

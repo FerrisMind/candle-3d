@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Mutex};
 
+use crate::weights::VarBuilder;
 use candle_core::{D, Device, DeviceLocation, IndexOp, Module, Result as CandleResult, Tensor};
 use candle_nn::{
     Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, LayerNorm, conv_transpose2d,
     conv2d, conv2d_no_bias, layer_norm,
 };
-use crate::weights::VarBuilder;
 
 pub(crate) const DPT_PATCH_SIZE: usize = 14;
 pub(crate) const DPT_INTERMEDIATE_LAYERS: [usize; 4] = [4, 11, 17, 23];
@@ -544,8 +544,12 @@ fn add_separable_pos_embed(xs: &Tensor, tables: &PosEmbedTables) -> CandleResult
         );
     }
     let half = channels / 2;
-    let out_u = xs.narrow(1, 0, half)?.broadcast_add(&tables.u)?;
-    let out_v = xs.narrow(1, half, half)?.broadcast_add(&tables.v)?;
+    // Tables are generated/cached in F32; follow the activation dtype so the
+    // DPT path also runs under F16 weights/activations.
+    let u = tables.u.to_dtype(xs.dtype())?;
+    let v = tables.v.to_dtype(xs.dtype())?;
+    let out_u = xs.narrow(1, 0, half)?.broadcast_add(&u)?;
+    let out_v = xs.narrow(1, half, half)?.broadcast_add(&v)?;
     Tensor::cat(&[&out_u, &out_v], 1)
 }
 
