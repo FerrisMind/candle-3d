@@ -189,20 +189,30 @@ TripoSR 1 image at `--mc-resolution 256`):
 | VGGT | q5_k | 0.95 GiB | 331 |
 | VGGT | q4_k | 0.82 GiB | 331 |
 | Pi3 | canonical F32 | 3.57 GiB | — |
+| Pi3 | f16 | 1.79 GiB | all tensors |
 | Pi3 | q8_0 | 0.95 GiB | 318 |
 | Pi3 | q6_k | 0.74 GiB | 318 |
 | Pi3 | q5_k | 0.62 GiB | 318 |
 | Pi3 | q4_k | 0.51 GiB | 318 |
 | Pi3X | canonical F32 | 5.07 GiB | — |
+| Pi3X | f16 | 2.53 GiB | all tensors |
 | Pi3X | q8_0 | 1.37 GiB | 466 |
 | Pi3X | q6_k | 1.06 GiB | 466 |
 | Pi3X | q5_k | 0.90 GiB | 466 |
 | Pi3X | q4_k | 0.74 GiB | 466 |
 | TripoSR | canonical F32 | 1.56 GiB | — |
+| TripoSR | f16 | 0.78 GiB | all tensors |
 | TripoSR | q8_0 | 0.42 GiB | 244 |
 | TripoSR | q6_k | 0.33 GiB | 235 |
 | TripoSR | q5_k | 0.27 GiB | 235 |
 | TripoSR | q4_k | 0.23 GiB | 235 |
+
+F16 is a straight precision conversion, not block quantization: every tensor is
+stored at 16-bit and the linear layers use the regular path without `QMatMul`.
+It costs about twice the Q8_0 size but preserves the F32 result: on
+CUDA/Vulkan/WGPU/CPU the three builds drift at most 0.034% / 0.042% / 0.0014%
+CD (Pi3/Pi3X/TripoSR) with F@1% = 1.000 on every backend. Build it with
+`--dtype f16 --fallback-dtype f16`.
 
 TripoSR Q8_0 quantizes 244 matrices; the K-quants use 256-wide blocks, so nine
 matrices whose row length is not divisible by 256 stay in F16.
@@ -286,22 +296,26 @@ backend's F32 run; Pi3/Pi3X 3 frames, TripoSR `mesh-input.png` at 256):
 
 | family | variant | CD rel | F@0.5% | F@1% | voxel IoU | normal |
 |---|---|---|---|---|---|---|
+| Pi3 | f16 | 0.034% | 1.000 | 1.000 | — | — |
 | Pi3 | q8_0 | 0.166% | 0.990 | 0.99995 | — | — |
 | Pi3 | q6_k | 0.139% | 0.985 | 0.99907 | — | — |
 | Pi3 | q5_k | 0.851% | 0.469 | 0.706 | — | — |
 | Pi3 | q4_k | 0.813% | 0.475 | 0.696 | — | — |
+| Pi3X | f16 | 0.037% | 1.000 | 1.000 | — | — |
 | Pi3X | q8_0 | 0.081% | 0.99999 | 1.000 | — | — |
 | Pi3X | q6_k | 0.873% | 0.129 | 0.598 | — | — |
 | Pi3X | q5_k | 2.279% | 0.000 | 0.000 | — | — |
 | Pi3X | q4_k | 0.789% | 0.274 | 0.719 | — | — |
+| TripoSR | f16 | 0.001% | 1.000 | 1.000 | 0.998 | 1.000 |
 | TripoSR | q8_0 | 0.036% | 0.9997 | 0.99994 | 0.920 | 0.993 |
 | TripoSR | q6_k | 0.050% | 0.9998 | 0.99995 | 0.886 | 0.991 |
 | TripoSR | q5_k | 0.058% | 0.9996 | 0.99985 | 0.863 | 0.990 |
 | TripoSR | q4_k | 0.129% | 0.9964 | 0.99985 | 0.682 | 0.978 |
 
-The same packages on every backend, each compared against that backend's own
-F32 run. F32 outputs agree across backends within 0.04% CD with F@1% = 1.000,
-so the spread below is quantization behavior, not baseline noise:
+The quantized packages on every backend, each compared against that backend's
+own F32 run. F32 outputs agree across backends within 0.04% CD with
+F@1% = 1.000, so the spread below is quantization behavior, not baseline
+noise:
 
 | family | variant | CD rel CUDA / Vulkan / WGPU / CPU | F@1% CUDA / Vulkan / WGPU / CPU |
 |---|---|---|---|
@@ -320,7 +334,10 @@ so the spread below is quantization behavior, not baseline noise:
 
 TripoSR voxel IoU is also backend-independent: 0.920/0.944/0.930/0.939 for
 Q8_0 and 0.682/0.675/0.675/0.663 for Q4_K (CUDA/Vulkan/WGPU/CPU), so the
-topology warning below holds on every backend.
+topology warning below holds on every backend. F16 is not in the table because
+it is not block-quantized, but it keeps F@1% = 1.000 on all four backends with
+CD ≤ 0.034% (Pi3), ≤ 0.042% (Pi3X) and ≤ 0.0014% (TripoSR); TripoSR voxel IoU
+is 0.997–0.998 and normal consistency ≥ 0.9996.
 
 Q8_0 is the only uniformly safe variant: F@1% ≥ 0.9999 for all three families
 on all four backends. Pi3 Q6_K is excellent on CUDA (0.99907) but drops to
