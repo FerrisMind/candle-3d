@@ -152,7 +152,7 @@ def main() -> int:
     suffix = "obj" if is_mesh else "ply"
 
     reference_artifact = out_dir / f"reference.{suffix}"
-    reference_npz = None if is_mesh else out_dir / "reference.npz"
+    reference_npz = out_dir / "reference.npz" if args.family == "vggt" else None
     run_one(
         args.binary,
         args.family,
@@ -177,7 +177,7 @@ def main() -> int:
         if not path:
             raise SystemExit(f"--variant expects NAME=PATH, got {spec!r}")
         artifact = out_dir / f"{name}.{suffix}"
-        npz_path = None if is_mesh else out_dir / f"{name}.npz"
+        npz_path = out_dir / f"{name}.npz" if args.family == "vggt" else None
         run_one(
             args.binary,
             args.family,
