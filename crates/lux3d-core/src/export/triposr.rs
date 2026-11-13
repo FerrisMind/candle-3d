@@ -1,16 +1,21 @@
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-    path::Path,
-};
+//! TripoSR export stage: format-agnostic triangle-mesh writer.
+//!
+//! GLB is the primary artifact; OBJ, PLY and STL are selected by file
+//! extension. TripoSR carries per-vertex colors, so GLB uses a `COLOR_0`
+//! attribute and PLY uses RGB vertex properties. STL cannot represent vertex
+//! colors and therefore drops them.
+
+use std::path::Path;
 
 use crate::{
     Result,
     contracts::{ExportPlan, ExportStage, TripoMesh},
-    error::Lux3dError,
     geometry::TripoMeshCpu,
 };
 
+use super::mesh::{MeshFormat, MeshView, ObjStyle, write_mesh, write_obj};
+
+/// Export-stage descriptor for the TripoSR family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TripoExportStage;
 
@@ -19,64 +24,36 @@ impl ExportStage<TripoMesh> for TripoExportStage {
 
     fn export(&self, _artifact: &TripoMesh) -> Result<Self::Output> {
         Ok(ExportPlan {
-            primary_extension: "obj".to_string(),
-            alternate_extensions: Vec::new(),
+            primary_extension: "glb".to_string(),
+            alternate_extensions: vec!["obj".to_string(), "ply".to_string(), "stl".to_string()],
             utility_notes: vec![
-                "vertex colors by default".to_string(),
-                "texture baking stays outside the core runtime contract".to_string(),
+                "GLB is the primary artifact; format follows the output extension".to_string(),
+                "vertex colors are emitted as COLOR_0 (GLB), RGB (PLY) and v-line colors (OBJ)"
+                    .to_string(),
+                "STL drops vertex colors".to_string(),
             ],
         })
     }
 }
 
 impl TripoExportStage {
+    /// Write the CPU mesh in the format selected by `path`'s extension.
+    pub fn write_mesh(&self, mesh: &TripoMeshCpu, path: &Path) -> Result<MeshFormat> {
+        let view = MeshView {
+            vertices: &mesh.vertices,
+            faces: &mesh.faces,
+            colors: Some(&mesh.vertex_colors),
+        };
+        write_mesh(&view, path, ObjStyle::TRIPOSR)
+    }
+
+    /// Write the CPU mesh as ASCII OBJ, preserving the historical output.
     pub fn write_obj(&self, mesh: &TripoMeshCpu, path: &Path) -> Result<()> {
-        let file = File::create(path).map_err(|source| Lux3dError::ModelAssetIo {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        let mut writer = BufWriter::new(file);
-        writeln!(writer, "# https://github.com/mikedh/trimesh").map_err(|source| {
-            Lux3dError::ModelAssetIo {
-                path: path.to_path_buf(),
-                source,
-            }
-        })?;
-        for index in 0..(mesh.vertices.len() / 3) {
-            let offset = index * 3;
-            writeln!(
-                writer,
-                "v {} {} {} {} {} {}",
-                mesh.vertices[offset],
-                mesh.vertices[offset + 1],
-                mesh.vertices[offset + 2],
-                mesh.vertex_colors[offset].clamp(0.0, 1.0),
-                mesh.vertex_colors[offset + 1].clamp(0.0, 1.0),
-                mesh.vertex_colors[offset + 2].clamp(0.0, 1.0)
-            )
-            .map_err(|source| Lux3dError::ModelAssetIo {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        }
-        for index in 0..(mesh.faces.len() / 3) {
-            let offset = index * 3;
-            writeln!(
-                writer,
-                "f {} {} {}",
-                mesh.faces[offset] + 1,
-                mesh.faces[offset + 1] + 1,
-                mesh.faces[offset + 2] + 1
-            )
-            .map_err(|source| Lux3dError::ModelAssetIo {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        }
-        writer.flush().map_err(|source| Lux3dError::ModelAssetIo {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        Ok(())
+        let view = MeshView {
+            vertices: &mesh.vertices,
+            faces: &mesh.faces,
+            colors: Some(&mesh.vertex_colors),
+        };
+        write_obj(&view, path, ObjStyle::TRIPOSR)
     }
 }
