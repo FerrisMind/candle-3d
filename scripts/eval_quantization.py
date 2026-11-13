@@ -21,6 +21,20 @@ Examples:
       --variant q8_0=/path/to/quantized/vggt-q8_0 \
       --source assets/frames --device vulkan \
       --output-dir out/eval-vggt
+
+  python scripts/eval_quantization.py pi3 \
+      --binary target/release/lux3d-cli.exe \
+      --reference /path/to/canonical-weights/pi3 \
+      --variant q8_0=/path/to/quantized/pi3-q8_0 \
+      --source assets/frames --device cuda \
+      --output-dir out/eval-pi3
+
+  python scripts/eval_quantization.py triposr \
+      --binary target/release/lux3d-cli.exe \
+      --reference /path/to/canonical-weights/triposr \
+      --variant q4_k=/path/to/quantized/triposr-q4_k \
+      --source assets/input.png --device cuda \
+      --output-dir out/eval-triposr
 """
 
 from __future__ import annotations

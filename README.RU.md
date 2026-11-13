@@ -137,6 +137,17 @@ cargo run -p lux3d-cli -- weights quantize vggt `
   --source <canonical-vggt-dir>/model.safetensors `
   --output <gguf-vggt-dir>/model.gguf --dtype q4_k --fallback-dtype f16
 
+# Pi3, Pi3X и TripoSR используют тот же конвертер.
+cargo run -p lux3d-cli -- weights quantize pi3 `
+  --source <canonical-pi3-dir>/model.safetensors `
+  --output <gguf-pi3-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize pi3x `
+  --source <canonical-pi3x-dir>/model.safetensors `
+  --output <gguf-pi3x-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize triposr `
+  --source <canonical-triposr-dir>/model.safetensors `
+  --output <gguf-triposr-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
 # RMBG-1.4 — вспомогательный пакет: отдельный GGUF, F16, те же правила standalone.
 cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
   --source <canonical-rmbg-dir>/model.safetensors `
@@ -159,7 +170,8 @@ cargo run -p lux3d-cli -- run triposg --device cuda `
 отклоняет.
 
 Замеры на canonical-пакетах (`RTX 3060 12 GiB`; TripoSG
-`--steps 2 --num-tokens 1024 --flash-octree-depth 5`, VGGT 3 кадра):
+`--steps 2 --num-tokens 1024 --flash-octree-depth 5`, VGGT/Pi3/Pi3X 3 кадра,
+TripoSR 1 изображение при `--mc-resolution 256`):
 
 | модель | вариант | размер GGUF | квантовано матриц |
 |---|---|---|---|
@@ -173,6 +185,24 @@ cargo run -p lux3d-cli -- run triposg --device cuda `
 | VGGT | q6_k | 1.09 GiB | 331 |
 | VGGT | q5_k | 0.95 GiB | 331 |
 | VGGT | q4_k | 0.82 GiB | 331 |
+| Pi3 | canonical F32 | 3.57 GiB | — |
+| Pi3 | q8_0 | 0.95 GiB | 318 |
+| Pi3 | q6_k | 0.74 GiB | 318 |
+| Pi3 | q5_k | 0.62 GiB | 318 |
+| Pi3 | q4_k | 0.51 GiB | 318 |
+| Pi3X | canonical F32 | 5.07 GiB | — |
+| Pi3X | q8_0 | 1.37 GiB | 466 |
+| Pi3X | q6_k | 1.06 GiB | 466 |
+| Pi3X | q5_k | 0.90 GiB | 466 |
+| Pi3X | q4_k | 0.74 GiB | 466 |
+| TripoSR | canonical F32 | 1.56 GiB | — |
+| TripoSR | q8_0 | 0.42 GiB | 244 |
+| TripoSR | q6_k | 0.33 GiB | 235 |
+| TripoSR | q5_k | 0.27 GiB | 235 |
+| TripoSR | q4_k | 0.23 GiB | 235 |
+
+У TripoSR Q8_0 квантует 244 матрицы; K-кванты используют блок 256, поэтому
+девять матриц с длиной строки не кратной 256 остаются в F16.
 
 RMBG-1.4 (вспомогательный): F32 0.16 GiB → F16 0.08 GiB; записано 686
 тензоров, 112 rank-0 тренировочных буферов опущено.
@@ -198,6 +228,15 @@ python scripts/compare_geometry.py vggt <reference.npz> <quantized.npz>
 python scripts/eval_quantization.py triposg --binary target/release/lux3d-cli.exe `
   --reference <canonical-triposg-dir> --variant q8_0=<dir-q8_0> --variant q4_k=<dir-q4_k> `
   --source <input-image> --device cuda --output-dir out/eval -- --steps 2 --num-tokens 1024 --flash-octree-depth 5
+
+# Тот же цикл работает для point-cloud моделей и TripoSR.
+python scripts/eval_quantization.py pi3x --binary target/release/lux3d-cli.exe `
+  --reference <canonical-pi3x-dir> --variant q8_0=<dir-q8_0> `
+  --source <frames-dir> --device cuda --output-dir out/eval-pi3x
+python scripts/eval_quantization.py triposr --binary target/release/lux3d-cli.exe `
+  --reference <canonical-triposr-dir> --variant q4_k=<dir-q4_k> `
+  --source <input-image> --device cuda --output-dir out/eval-triposr `
+  --mc-resolution 256 --mc-threshold 25.0
 ```
 
 Дрейф меша TripoSG (2 шага, 1024 токена, depth 5; эталон — F32 той же
@@ -239,7 +278,38 @@ VGGT (3 кадра; эталон — F32 тензоры той же подлож
 | F32 | CUDA | — | — | — | — | — | 6.7 GiB |
 | F32 | Vulkan | — | — | — | — | — | 7.3 GiB |
 
-Рекомендации: TripoSG укладывается в ~0.25% Chamfer даже на Q4_K, поэтому
+Point-cloud Pi3/Pi3X и меш TripoSR (CUDA; эталон — F32 той же подложки;
+Pi3/Pi3X 3 кадра, TripoSR `mesh-input.png` при 256):
+
+| семейство | вариант | CD rel | F@0.5% | F@1% | voxel IoU | normal |
+|---|---|---|---|---|---|---|
+| Pi3 | q8_0 | 0.166% | 0.990 | 0.99995 | — | — |
+| Pi3 | q6_k | 0.139% | 0.985 | 0.99907 | — | — |
+| Pi3 | q5_k | 0.851% | 0.469 | 0.706 | — | — |
+| Pi3 | q4_k | 0.813% | 0.475 | 0.696 | — | — |
+| Pi3X | q8_0 | 0.081% | 0.99999 | 1.000 | — | — |
+| Pi3X | q6_k | 0.873% | 0.129 | 0.598 | — | — |
+| Pi3X | q5_k | 2.279% | 0.000 | 0.000 | — | — |
+| Pi3X | q4_k | 0.789% | 0.274 | 0.719 | — | — |
+| TripoSR | q8_0 | 0.036% | 0.9997 | 0.99994 | 0.920 | 0.993 |
+| TripoSR | q6_k | 0.050% | 0.9998 | 0.99995 | 0.886 | 0.991 |
+| TripoSR | q5_k | 0.058% | 0.9996 | 0.99985 | 0.863 | 0.990 |
+| TripoSR | q4_k | 0.129% | 0.9964 | 0.99985 | 0.682 | 0.978 |
+
+Q8_0 стабилен на разных бэкендах: Pi3 F@1% 0.99995 на CUDA и 0.99993 на WGPU;
+Pi3X — 1.000 на CUDA/Vulkan/WGPU и 1.000 на CPU; TripoSR — 0.99994 на CUDA и
+0.99996 на WGPU.
+
+Рекомендации: Pi3 безопасен на Q8_0/Q6_K; Q5_K/Q4_K теряют ~30% F-score, в
+продакшн их не стоит. Pi3X требует Q8_0 — Q6_K/Q5_K/Q4_K разваливаются, хотя
+ошибка хранения весов растёт монотонно. Чувствительный модуль — image
+`encoder.`: если оставить его в F16, Q6_K восстанавливает F@1% с 0.598 до
+0.99996, но пакет получается 1.40 GiB против 1.37 GiB у полностью Q8_0, так что
+Q8_0 строго лучше. TripoSR самый устойчивый: Q8_0–Q4_K держат F@1% ≥ 0.9998.
+Но Q4_K теряет топологию поверхности (voxel IoU 0.68 против 0.92 у Q8_0),
+поэтому при важности топологии выбирайте Q6_K/Q8_0.
+
+TripoSG и VGGT: TripoSG укладывается в ~0.25% Chamfer даже на Q4_K, поэтому
 Q4_K/Q5_K для него практичны. VGGT чувствителен к позе: Q8_0 почти без
 потерь, Q6_K — приемлемый запасной вариант, Q5_K — на границе, Q4_K
 непригоден (pointmap и поза камеры разваливаются). Это совпадает с

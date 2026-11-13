@@ -140,6 +140,17 @@ cargo run -p lux3d-cli -- weights quantize vggt `
   --source <canonical-vggt-dir>/model.safetensors `
   --output <gguf-vggt-dir>/model.gguf --dtype q4_k --fallback-dtype f16
 
+# Pi3, Pi3X and TripoSR use the same converter.
+cargo run -p lux3d-cli -- weights quantize pi3 `
+  --source <canonical-pi3-dir>/model.safetensors `
+  --output <gguf-pi3-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize pi3x `
+  --source <canonical-pi3x-dir>/model.safetensors `
+  --output <gguf-pi3x-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize triposr `
+  --source <canonical-triposr-dir>/model.safetensors `
+  --output <gguf-triposr-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
 # RMBG-1.4 is an auxiliary package: separate GGUF, F16, same standalone rules.
 cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
   --source <canonical-rmbg-dir>/model.safetensors `
@@ -162,7 +173,8 @@ time) can still sit next to a full canonical package, but is rejected as a
 standalone package.
 
 Measured on the bundled canonical packages (`RTX 3060 12 GiB`; TripoSG
-`--steps 2 --num-tokens 1024 --flash-octree-depth 5`, VGGT 3 frames):
+`--steps 2 --num-tokens 1024 --flash-octree-depth 5`, VGGT/Pi3/Pi3X 3 frames,
+TripoSR 1 image at `--mc-resolution 256`):
 
 | model | variant | GGUF size | weights kept |
 |---|---|---|---|
@@ -176,6 +188,24 @@ Measured on the bundled canonical packages (`RTX 3060 12 GiB`; TripoSG
 | VGGT | q6_k | 1.09 GiB | 331 |
 | VGGT | q5_k | 0.95 GiB | 331 |
 | VGGT | q4_k | 0.82 GiB | 331 |
+| Pi3 | canonical F32 | 3.57 GiB | — |
+| Pi3 | q8_0 | 0.95 GiB | 318 |
+| Pi3 | q6_k | 0.74 GiB | 318 |
+| Pi3 | q5_k | 0.62 GiB | 318 |
+| Pi3 | q4_k | 0.51 GiB | 318 |
+| Pi3X | canonical F32 | 5.07 GiB | — |
+| Pi3X | q8_0 | 1.37 GiB | 466 |
+| Pi3X | q6_k | 1.06 GiB | 466 |
+| Pi3X | q5_k | 0.90 GiB | 466 |
+| Pi3X | q4_k | 0.74 GiB | 466 |
+| TripoSR | canonical F32 | 1.56 GiB | — |
+| TripoSR | q8_0 | 0.42 GiB | 244 |
+| TripoSR | q6_k | 0.33 GiB | 235 |
+| TripoSR | q5_k | 0.27 GiB | 235 |
+| TripoSR | q4_k | 0.23 GiB | 235 |
+
+TripoSR Q8_0 quantizes 244 matrices; the K-quants use 256-wide blocks, so nine
+matrices whose row length is not divisible by 256 stay in F16.
 
 RMBG-1.4 (auxiliary): F32 0.16 GiB → F16 0.08 GiB; 686 tensors written,
 112 rank-0 training buffers omitted.
@@ -201,6 +231,15 @@ python scripts/compare_geometry.py vggt <reference.npz> <quantized.npz>
 python scripts/eval_quantization.py triposg --binary target/release/lux3d-cli.exe `
   --reference <canonical-triposg-dir> --variant q8_0=<dir-q8_0> --variant q4_k=<dir-q4_k> `
   --source <input-image> --device cuda --output-dir out/eval -- --steps 2 --num-tokens 1024 --flash-octree-depth 5
+
+# The same loop covers the point-cloud and TripoSR families.
+python scripts/eval_quantization.py pi3x --binary target/release/lux3d-cli.exe `
+  --reference <canonical-pi3x-dir> --variant q8_0=<dir-q8_0> `
+  --source <frames-dir> --device cuda --output-dir out/eval-pi3x
+python scripts/eval_quantization.py triposr --binary target/release/lux3d-cli.exe `
+  --reference <canonical-triposr-dir> --variant q4_k=<dir-q4_k> `
+  --source <input-image> --device cuda --output-dir out/eval-triposr `
+  --mc-resolution 256 --mc-threshold 25.0
 ```
 
 TripoSG mesh drift (2 steps, 1024 tokens, depth 5; reference is the same
@@ -242,11 +281,42 @@ VGGT (3 frames; reference is the same backend's F32 tensors; pose AUC on the
 | F32 | CUDA | — | — | — | — | — | 6.7 GiB |
 | F32 | Vulkan | — | — | — | — | — | 7.3 GiB |
 
-Recommendations: TripoSG stays within ~0.25% Chamfer even at Q4_K, so Q4_K/Q5_K
-are practical there. VGGT is pose-sensitive: Q8_0 is near-lossless, Q6_K is an
-acceptable fallback, Q5_K is marginal, and Q4_K is not viable (pointmap and
-camera pose collapse), matching the published finding that naive 4-bit
-quantization destroys VGGT-style reconstruction. Use `--dump-npz` and the
+Pi3/Pi3X point clouds and TripoSR mesh (CUDA; reference is the same backend's
+F32 run; Pi3/Pi3X 3 frames, TripoSR `mesh-input.png` at 256):
+
+| family | variant | CD rel | F@0.5% | F@1% | voxel IoU | normal |
+|---|---|---|---|---|---|---|
+| Pi3 | q8_0 | 0.166% | 0.990 | 0.99995 | — | — |
+| Pi3 | q6_k | 0.139% | 0.985 | 0.99907 | — | — |
+| Pi3 | q5_k | 0.851% | 0.469 | 0.706 | — | — |
+| Pi3 | q4_k | 0.813% | 0.475 | 0.696 | — | — |
+| Pi3X | q8_0 | 0.081% | 0.99999 | 1.000 | — | — |
+| Pi3X | q6_k | 0.873% | 0.129 | 0.598 | — | — |
+| Pi3X | q5_k | 2.279% | 0.000 | 0.000 | — | — |
+| Pi3X | q4_k | 0.789% | 0.274 | 0.719 | — | — |
+| TripoSR | q8_0 | 0.036% | 0.9997 | 0.99994 | 0.920 | 0.993 |
+| TripoSR | q6_k | 0.050% | 0.9998 | 0.99995 | 0.886 | 0.991 |
+| TripoSR | q5_k | 0.058% | 0.9996 | 0.99985 | 0.863 | 0.990 |
+| TripoSR | q4_k | 0.129% | 0.9964 | 0.99985 | 0.682 | 0.978 |
+
+Q8_0 is stable across backends: Pi3 F@1% is 0.99995 on CUDA and 0.99993 on
+WGPU; Pi3X is 1.000 on CUDA/Vulkan/WGPU and 1.000 on CPU; TripoSR is 0.99994
+on CUDA and 0.99996 on WGPU.
+
+Recommendations: Pi3 is safe at Q8_0/Q6_K; Q5_K/Q4_K lose ~30% F-score, so keep
+them out of production. Pi3X needs Q8_0 — Q6_K/Q5_K/Q4_K collapse despite the
+usual monotonic storage error. The image `encoder.` is the sensitive module:
+keeping it F16 restores Q6_K F@1% from 0.598 to 0.99996, but the resulting
+package is 1.40 GiB versus 1.37 GiB for all-Q8_0, so Q8_0 is strictly better.
+TripoSR is the most quantization-tolerant family here: Q8_0 through Q4_K keep
+F@1% ≥ 0.9998. Q4_K still loses surface topology (voxel IoU 0.68 versus 0.92
+at Q8_0), so prefer Q6_K/Q8_0 when topology fidelity matters.
+
+TripoSG and VGGT: TripoSG stays within ~0.25% Chamfer even at Q4_K, so
+Q4_K/Q5_K are practical there. VGGT is pose-sensitive: Q8_0 is near-lossless,
+Q6_K is an acceptable fallback, Q5_K is marginal, and Q4_K is not viable
+(pointmap and camera pose collapse), matching the published finding that naive
+4-bit quantization destroys VGGT-style reconstruction. Use `--dump-npz` and the
 script above on your own validation set before shipping a lower-bit variant.
 RMBG-1.4 is a small matting network and is kept as a separate F16 GGUF, which
 halves its footprint with no measurable mask drift.
