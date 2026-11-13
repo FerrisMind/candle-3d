@@ -23,7 +23,9 @@ concurrency:
 jobs:
   metal:
     # GitHub's arm64 macOS runners expose an Apple Silicon Metal device.
-    runs-on: macos-14
+    # macos-14 was retired from GitHub Actions; macos-15 is the current
+    # supported arm64 image.
+    runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
