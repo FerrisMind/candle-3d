@@ -161,6 +161,17 @@ fn device(name: &str, index: usize) -> Result<Device> {
                 candle_core::bail!("binary was built without the `wgpu` feature")
             }
         }
+        "metal" => {
+            #[cfg(feature = "metal")]
+            {
+                Device::new_metal(index)
+            }
+            #[cfg(not(feature = "metal"))]
+            {
+                let _ = index;
+                candle_core::bail!("binary was built without the `metal` feature")
+            }
+        }
         other => candle_core::bail!("unknown device `{other}`"),
     }
 }

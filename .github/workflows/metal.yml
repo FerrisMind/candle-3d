@@ -1,0 +1,42 @@
+name: Metal
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/metal.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/metal.yml"
+
+concurrency:
+  group: metal-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metal:
+    # GitHub's arm64 macOS runners expose an Apple Silicon Metal device.
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build core with Metal
+        run: cargo build -p lux3d-core --features metal
+
+      - name: Unit tests
+        run: cargo test -p lux3d-core --features metal --lib
+
+      - name: Metal quantized-kernel smoke test
+        run: >
+          cargo run --release -p lux3d-core --features metal
+          --example quant_probe -- --device metal --rows 257
