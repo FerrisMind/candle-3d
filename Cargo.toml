@@ -10,10 +10,10 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "0.1.0"
+version = "0.2.0"
 rust-version = "1.85"
 authors = ["FerrisMind"]
-description = "CUDA-first Rust runtime, inspection CLI, and weight tooling for Pi3, Pi3X, and TripoSR."
+description = "CUDA-first Rust runtime, inspection CLI, and weight tooling for Pi3, Pi3X, TripoSR, TripoSG, and VGGT."
 homepage = "https://github.com/oxide-lab/Lux3d"
 repository = "https://github.com/oxide-lab/Lux3d"
 keywords = ["3d", "reconstruction", "candle", "cuda", "safetensors"]
