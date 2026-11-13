@@ -281,8 +281,8 @@ VGGT (3 frames; reference is the same backend's F32 tensors; pose AUC on the
 | F32 | CUDA | — | — | — | — | — | 6.7 GiB |
 | F32 | Vulkan | — | — | — | — | — | 7.3 GiB |
 
-Pi3/Pi3X point clouds and TripoSR mesh (CUDA; reference is the same backend's
-F32 run; Pi3/Pi3X 3 frames, TripoSR `mesh-input.png` at 256):
+Pi3/Pi3X point clouds and TripoSR mesh (CUDA detail; reference is the same
+backend's F32 run; Pi3/Pi3X 3 frames, TripoSR `mesh-input.png` at 256):
 
 | family | variant | CD rel | F@0.5% | F@1% | voxel IoU | normal |
 |---|---|---|---|---|---|---|
@@ -299,18 +299,40 @@ F32 run; Pi3/Pi3X 3 frames, TripoSR `mesh-input.png` at 256):
 | TripoSR | q5_k | 0.058% | 0.9996 | 0.99985 | 0.863 | 0.990 |
 | TripoSR | q4_k | 0.129% | 0.9964 | 0.99985 | 0.682 | 0.978 |
 
-Q8_0 is stable across backends: Pi3 F@1% is 0.99995 on CUDA and 0.99993 on
-WGPU; Pi3X is 1.000 on CUDA/Vulkan/WGPU and 1.000 on CPU; TripoSR is 0.99994
-on CUDA and 0.99996 on WGPU.
+The same packages on every backend, each compared against that backend's own
+F32 run. F32 outputs agree across backends within 0.04% CD with F@1% = 1.000,
+so the spread below is quantization behavior, not baseline noise:
 
-Recommendations: Pi3 is safe at Q8_0/Q6_K; Q5_K/Q4_K lose ~30% F-score, so keep
-them out of production. Pi3X needs Q8_0 — Q6_K/Q5_K/Q4_K collapse despite the
-usual monotonic storage error. The image `encoder.` is the sensitive module:
-keeping it F16 restores Q6_K F@1% from 0.598 to 0.99996, but the resulting
-package is 1.40 GiB versus 1.37 GiB for all-Q8_0, so Q8_0 is strictly better.
-TripoSR is the most quantization-tolerant family here: Q8_0 through Q4_K keep
-F@1% ≥ 0.9998. Q4_K still loses surface topology (voxel IoU 0.68 versus 0.92
-at Q8_0), so prefer Q6_K/Q8_0 when topology fidelity matters.
+| family | variant | CD rel CUDA / Vulkan / WGPU / CPU | F@1% CUDA / Vulkan / WGPU / CPU |
+|---|---|---|---|
+| Pi3 | q8_0 | 0.166 / 0.172 / 0.259 / 0.251% | 0.99995 / 1.000 / 0.9999 / 0.9999 |
+| Pi3 | q6_k | 0.139 / 0.455 / 0.546 / 0.555% | 0.99907 / 0.966 / 0.919 / 0.895 |
+| Pi3 | q5_k | 0.851 / 0.190 / 0.240 / 0.209% | 0.706 / 0.995 / 0.986 / 0.990 |
+| Pi3 | q4_k | 0.813 / 1.191 / 0.964 / 1.016% | 0.696 / 0.535 / 0.663 / 0.644 |
+| Pi3X | q8_0 | 0.081 / 0.071 / 0.086 / 0.155% | 1.000 / 1.000 / 1.000 / 1.000 |
+| Pi3X | q6_k | 0.873 / 1.818 / 1.181 / 1.613% | 0.598 / 0.070 / 0.237 / 0.089 |
+| Pi3X | q5_k | 2.279 / 3.383 / 2.819 / 2.749% | 0.000 / 0.000 / 0.000 / 0.000 |
+| Pi3X | q4_k | 0.789 / 0.328 / 0.383 / 0.370% | 0.719 / 0.947 / 0.930 / 0.938 |
+| TripoSR | q8_0 | 0.036 / 0.025 / 0.032 / 0.028% | 0.9999 / 1.000 / 1.000 / 0.9999 |
+| TripoSR | q6_k | 0.050 / 0.052 / 0.056 / 0.038% | 0.9999 / 1.000 / 0.9999 / 1.000 |
+| TripoSR | q5_k | 0.058 / 0.055 / 0.066 / 0.061% | 0.9998 / 0.9999 / 0.9999 / 0.9999 |
+| TripoSR | q4_k | 0.129 / 0.131 / 0.132 / 0.136% | 0.9998 / 0.9997 / 0.9997 / 0.9997 |
+
+TripoSR voxel IoU is also backend-independent: 0.920/0.944/0.930/0.939 for
+Q8_0 and 0.682/0.675/0.675/0.663 for Q4_K (CUDA/Vulkan/WGPU/CPU), so the
+topology warning below holds on every backend.
+
+Q8_0 is the only uniformly safe variant: F@1% ≥ 0.9999 for all three families
+on all four backends. Pi3 Q6_K is excellent on CUDA (0.99907) but drops to
+0.895–0.966 on CPU/Vulkan/WGPU, so treat it as a CUDA-only choice; Pi3
+Q5_K/Q4_K are backend-sensitive, so keep them out of production.
+Pi3X needs Q8_0 — Q6_K/Q5_K/Q4_K collapse despite the usual monotonic storage
+error. The image `encoder.` is the sensitive module: keeping it F16 restores
+Q6_K F@1% from 0.598 to 0.99996, but the resulting package is 1.40 GiB versus
+1.37 GiB for all-Q8_0, so Q8_0 is strictly better. TripoSR is the most
+quantization-tolerant family here: Q8_0 through Q4_K keep F@1% ≥ 0.9997 on
+every backend. Q4_K still loses surface topology (voxel IoU 0.66–0.68 versus
+0.92–0.94 at Q8_0), so prefer Q6_K/Q8_0 when topology fidelity matters.
 
 TripoSG and VGGT: TripoSG stays within ~0.25% Chamfer even at Q4_K, so
 Q4_K/Q5_K are practical there. VGGT is pose-sensitive: Q8_0 is near-lossless,
