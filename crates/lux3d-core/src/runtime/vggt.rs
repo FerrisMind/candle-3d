@@ -16,7 +16,7 @@ use super::{
 use crate::{
     CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result,
     error::Lux3dError,
-    export::VggtExportStage,
+    export::{PointCloudFormat, VggtExportStage},
     geometry::VggtGeometryStage,
     load_canonical_weights,
     neural::VggtNeuralStage,
@@ -613,7 +613,28 @@ impl VggtPipeline {
         self.run_forward(prepared, false).map(|(output, _)| output)
     }
 
-    /// Export `world_points_conf > 1.0` (the VGGT demo threshold) as ASCII PLY.
+    /// Export `world_points_conf > 1.0` (the VGGT demo threshold) as `.ply`
+    /// (primary) or `.xyz`.
+    pub fn export_point_cloud(
+        &self,
+        output: &VggtInferenceOutput,
+        path: &Path,
+    ) -> Result<PointCloudFormat> {
+        self.export_point_cloud_with_threshold(output, path, 1.0)
+    }
+
+    /// Export `world_points_conf > conf_threshold` (strict) as `.ply` or `.xyz`.
+    pub fn export_point_cloud_with_threshold(
+        &self,
+        output: &VggtInferenceOutput,
+        path: &Path,
+        conf_threshold: f32,
+    ) -> Result<PointCloudFormat> {
+        let point_cloud = self.geometry.assemble_cpu(output, conf_threshold)?;
+        self.export.write_point_cloud(&point_cloud, path)
+    }
+
+    /// Export `world_points_conf > 1.0` as ASCII PLY (legacy entry point).
     pub fn export_ply(&self, output: &VggtInferenceOutput, path: &Path) -> Result<()> {
         self.export_ply_with_threshold(output, path, 1.0)
     }

@@ -1,22 +1,23 @@
 use std::{path::Path, sync::Arc};
 
+use super::nn_blocks::{Linear, linear_dense as linear, linear_no_bias_dense as linear_no_bias};
+use crate::weights::VarBuilder;
 use candle_core::{DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{
     ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Module, conv_transpose2d,
     group_norm, layer_norm,
 };
-use crate::weights::VarBuilder;
-use super::nn_blocks::{
-    Linear,
-    linear_dense as linear,
-    linear_no_bias_dense as linear_no_bias,
-};
 use image::{DynamicImage, ImageBuffer, ImageReader, Rgba, RgbaImage};
 
 use crate::{
-    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
-    error::Lux3dError, export::TripoExportStage, geometry::TripoGeometryStage,
-    load_canonical_weights, neural::TripoNeuralStage, preprocess::TripoPreprocessStage,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result,
+    contracts::SpatialSize,
+    error::Lux3dError,
+    export::{MeshFormat, TripoExportStage},
+    geometry::TripoGeometryStage,
+    load_canonical_weights,
+    neural::TripoNeuralStage,
+    preprocess::TripoPreprocessStage,
 };
 
 #[cfg(feature = "vision-preproc")]
@@ -305,6 +306,14 @@ impl TripoSrPipeline {
             .materialize_buffers(&mesh_cpu, scene_codes.device())
     }
 
+    /// Export mesh buffers in the format selected by `path`'s extension:
+    /// `.glb` (primary), `.obj`, `.ply` or `.stl`.
+    pub fn export_mesh(&self, mesh: &TripoMeshBuffers, path: &Path) -> Result<MeshFormat> {
+        let mesh_cpu = self.geometry.cpu_from_buffers(mesh)?;
+        self.export.write_mesh(&mesh_cpu, path)
+    }
+
+    /// Export mesh buffers as ASCII OBJ (legacy entry point).
     pub fn export_obj(&self, mesh: &TripoMeshBuffers, path: &Path) -> Result<()> {
         let mesh_cpu = self.geometry.cpu_from_buffers(mesh)?;
         self.export.write_obj(&mesh_cpu, path)

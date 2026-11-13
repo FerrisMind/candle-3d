@@ -6,21 +6,26 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use super::nn_blocks::Linear;
+use crate::weights::VarBuilder;
 use candle_core::{D, DType, Device, IndexOp, Result as CandleResult, Tensor};
 use candle_nn::{
     Conv2d, Conv2dConfig, ConvTranspose2d, ConvTranspose2dConfig, GroupNorm, LayerNorm, Module,
     conv_transpose2d, conv2d, group_norm, layer_norm,
 };
-use crate::weights::VarBuilder;
-use super::nn_blocks::Linear;
 use image::imageops::FilterType;
 use ndarray::{Array3, Axis, Ix3};
 use ndarray_npy::NpzReader;
 
 use crate::{
-    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
-    error::Lux3dError, export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
-    neural::Pi3xNeuralStage, preprocess::Pi3xPreprocessStage,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result,
+    contracts::SpatialSize,
+    error::Lux3dError,
+    export::{Pi3ExportStage, PointCloudFormat},
+    geometry::Pi3GeometryStage,
+    load_canonical_weights,
+    neural::Pi3xNeuralStage,
+    preprocess::Pi3xPreprocessStage,
 };
 
 #[cfg(feature = "vision-preproc")]
@@ -237,6 +242,25 @@ impl Pi3xPipeline {
     ) -> Result<Pi3xPreparedInputs> {
         self.preprocess
             .prepare_inputs_from_path(source, conditions_path, interval, device)
+    }
+
+    /// Write the assembled point cloud as `.ply` (primary) or `.xyz`.
+    pub fn export_point_cloud(
+        &self,
+        output: &Pi3xInferenceOutput,
+        path: &Path,
+    ) -> Result<PointCloudFormat> {
+        let point_cloud = self
+            .geometry
+            .assemble_cpu(&crate::runtime::Pi3InferenceOutput {
+                local_points: output.local_points.clone(),
+                confidence_logits: output.confidence_logits.clone(),
+                camera_poses: output.camera_poses.clone(),
+                points: output.points.clone(),
+                export_mask: output.export_mask.clone(),
+                rgb_frames: output.rgb_frames.clone(),
+            })?;
+        self.export.write_point_cloud(&point_cloud, path)
     }
 
     pub fn export_ply(&self, output: &Pi3xInferenceOutput, path: &Path) -> Result<()> {
@@ -1153,6 +1177,26 @@ impl Pi3xVoPipeline {
             inject_conditions,
             device,
         )
+    }
+
+    /// Write the VO point cloud as `.ply` (primary) or `.xyz`.
+    pub fn export_point_cloud(
+        &self,
+        output: &Pi3xVoOutput,
+        path: &Path,
+    ) -> Result<PointCloudFormat> {
+        let point_cloud = self
+            .core
+            .geometry
+            .assemble_cpu(&crate::runtime::Pi3InferenceOutput {
+                local_points: output.points.clone(),
+                confidence_logits: output.confidence_logits.clone(),
+                camera_poses: output.camera_poses.clone(),
+                points: output.points.clone(),
+                export_mask: output.export_mask.clone(),
+                rgb_frames: output.rgb_frames.clone(),
+            })?;
+        self.core.export.write_point_cloud(&point_cloud, path)
     }
 
     pub fn export_ply(&self, output: &Pi3xVoOutput, path: &Path) -> Result<()> {

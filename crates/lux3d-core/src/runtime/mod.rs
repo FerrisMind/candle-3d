@@ -119,9 +119,14 @@ pub use vggt::{
 };
 
 use crate::{
-    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result, contracts::SpatialSize,
-    error::Lux3dError, export::Pi3ExportStage, geometry::Pi3GeometryStage, load_canonical_weights,
-    neural::Pi3NeuralStage, preprocess::Pi3PreprocessStage,
+    CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result,
+    contracts::SpatialSize,
+    error::Lux3dError,
+    export::{Pi3ExportStage, PointCloudFormat},
+    geometry::Pi3GeometryStage,
+    load_canonical_weights,
+    neural::Pi3NeuralStage,
+    preprocess::Pi3PreprocessStage,
 };
 
 #[derive(Debug)]
@@ -558,6 +563,17 @@ impl Pi3Pipeline {
         self.neural.infer_tensors(self, &prepared)
     }
 
+    /// Write the assembled point cloud as `.ply` (primary) or `.xyz`.
+    pub fn export_point_cloud(
+        &self,
+        output: &Pi3InferenceOutput,
+        path: &Path,
+    ) -> Result<PointCloudFormat> {
+        let point_cloud = self.geometry.assemble_cpu(output)?;
+        self.export.write_point_cloud(&point_cloud, path)
+    }
+
+    /// Write the assembled point cloud as ASCII PLY (legacy entry point).
     pub fn export_ply(&self, output: &Pi3InferenceOutput, path: &Path) -> Result<()> {
         let point_cloud = self.geometry.assemble_cpu(output)?;
         self.export.write_ply(&point_cloud, path)

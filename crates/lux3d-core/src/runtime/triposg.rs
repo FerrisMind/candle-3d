@@ -23,8 +23,9 @@
 //! `extract_mesh` decodes the hierarchical SDF grid at the canonical
 //! `+/-1.005` bounds (level 0, positive = inside) and assembles the CPU mesh
 //! through the TripoSG geometry stage; device mesh buffers are materialized
-//! on the latents' device. `export_obj` moves the buffers to CPU and writes
-//! the reference-style ASCII OBJ through the export stage.
+//! on the latents' device. `export_mesh` moves the buffers to CPU and writes
+//! GLB/OBJ/PLY/STL according to the output extension; `export_obj` keeps the
+//! legacy OBJ-only entry point.
 
 use std::{path::Path, sync::Arc};
 
@@ -43,7 +44,7 @@ use super::{
 use crate::{
     AuxiliaryWeightSetPaths, CanonicalWeightSetPaths, ModelAssetOptions, ModelFamily, Result,
     error::Lux3dError,
-    export::TripoSgExportStage,
+    export::{MeshFormat, TripoSgExportStage},
     geometry::{TripoSgGeometryStage, TripoSgMeshCpu},
     load_auxiliary_canonical_weights, load_canonical_weights,
     neural::TripoSgNeuralStage,
@@ -630,10 +631,20 @@ impl TripoSgPipeline {
         Ok(TripoSgMeshBuffers { vertices, faces })
     }
 
-    /// Export mesh buffers as ASCII OBJ: gather both tensors to CPU, rebuild
-    /// the CPU mesh and run the export-stage writer (`v x y z`, 1-based
-    /// `f a b c`, no vertex colors).
+    /// Export mesh buffers in the format selected by `path`'s extension:
+    /// `.glb` (primary), `.obj`, `.ply` or `.stl`.
+    pub fn export_mesh(&self, mesh: &TripoSgMeshBuffers, path: &Path) -> Result<MeshFormat> {
+        let mesh_cpu = self.mesh_cpu(mesh)?;
+        self.export.write_mesh(&mesh_cpu, path)
+    }
+
+    /// Export mesh buffers as ASCII OBJ (legacy entry point).
     pub fn export_obj(&self, mesh: &TripoSgMeshBuffers, path: &Path) -> Result<()> {
+        let mesh_cpu = self.mesh_cpu(mesh)?;
+        self.export.write_obj(&mesh_cpu, path)
+    }
+
+    fn mesh_cpu(&self, mesh: &TripoSgMeshBuffers) -> Result<TripoSgMeshCpu> {
         let vertices = mesh
             .vertices
             .to_device(&Device::Cpu)
@@ -651,16 +662,15 @@ impl TripoSgPipeline {
                 message: format!("failed to gather TripoSG mesh faces on cpu: {source}"),
             })?;
         // The device buffers don't carry grid metadata (resolution lives in
-        // the SDF grid, which is consumed inside extract_mesh); the OBJ writer
-        // only reads vertices/faces.
-        let mesh_cpu = TripoSgMeshCpu {
+        // the SDF grid, which is consumed inside extract_mesh); exporters only
+        // read vertices/faces.
+        Ok(TripoSgMeshCpu {
             resolution: 0,
             sdf_level: CANONICAL_SDF_LEVEL,
             bounds: CANONICAL_BOUNDS,
             vertices,
             faces,
-        };
-        self.export.write_obj(&mesh_cpu, path)
+        })
     }
 
     /// `latents` must be `[1, num_tokens, 64]` (batch 1 — the VAE decoder and
