@@ -870,24 +870,31 @@ fn source_pathbuf(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "cuda")]
     use std::path::PathBuf;
 
+    #[cfg(feature = "cuda")]
     use candle_core::Device;
 
+    #[cfg(feature = "cuda")]
     use super::Pi3Pipeline;
+    #[cfg(feature = "cuda")]
     use crate::{
         ModelFamily,
         test_support::{GpuTestLock, model_asset_options, runtime_root},
     };
 
+    #[cfg(feature = "cuda")]
     fn repo_root() -> PathBuf {
         runtime_root()
     }
 
+    #[cfg(feature = "cuda")]
     fn accel_device() -> Device {
         Device::new_cuda(0).expect("CUDA required for runtime cache tests")
     }
 
+    #[cfg(feature = "cuda")]
     #[test]
     fn pi3_encoder_reuses_cached_interpolated_positional_embeddings() {
         let _guard = GpuTestLock::acquire().expect("gpu test lock");

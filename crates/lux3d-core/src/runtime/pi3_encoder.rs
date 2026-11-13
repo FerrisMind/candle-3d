@@ -261,7 +261,7 @@ pub fn load_pi3_depth_encoder(vb: VarBuilder) -> CandleResult<Pi3DinoEncoder> {
 }
 
 impl Pi3DinoEncoder {
-    #[cfg(test)]
+    #[cfg(all(test, feature = "cuda"))]
     pub(crate) fn cached_pos_encoding_entries(&self) -> usize {
         self.interpolated_pos_encoding_cache
             .lock()
