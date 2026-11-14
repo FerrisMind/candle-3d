@@ -3,11 +3,11 @@ mod quantize;
 pub use auxiliary::{
     AuxiliaryWeightSetPaths, AuxiliaryWeightsManifest, load_auxiliary_canonical_weights,
 };
+pub(crate) use candle_nn::VarBuilder;
 pub use quantize::{
     QuantizeOptions, QuantizeReport, dtype_from_name, dtype_name, quantize_auxiliary_checkpoint,
     quantize_checkpoint,
 };
-pub(crate) use candle_nn::VarBuilder;
 
 use std::{
     collections::BTreeMap,
@@ -178,6 +178,7 @@ impl WeightLocator {
             ModelFamily::TripoSr => self.locate_triposr(),
             ModelFamily::TripoSg => self.locate_triposg(),
             ModelFamily::Vggt => self.locate_vggt(),
+            ModelFamily::Trellis2 => self.locate_trellis2(),
         }
     }
 
@@ -302,6 +303,89 @@ impl WeightLocator {
             license_note:
                 "TripoSG code and weights are MIT; canonical safetensors stay outside vendor tree."
                     .to_string(),
+        })
+    }
+
+    /// TRELLIS.2-4B ships as a flat per-component layout: each stage is a
+    /// `<name>.safetensors` + sibling `<name>.json` config pair under `ckpts/`,
+    /// the dense sparse-structure decoder lives under `external/ss_dec/ckpts/`,
+    /// and the DINOv3 conditioner under `external/dinov3/`. `pipeline.json`
+    /// carries the sampler params, model table and normalization vectors.
+    /// The raw file order below is the canonical merge order consumed by the
+    /// Python normalizer (`tools/python_baseline/normalize_weights.py`).
+    fn locate_trellis2(&self) -> Result<CanonicalizationPlan> {
+        let ckpt_pairs = [
+            "ss_flow_img_dit_1_3B_64_bf16",
+            "slat_flow_img2shape_dit_1_3B_512_bf16",
+            "slat_flow_img2shape_dit_1_3B_1024_bf16",
+            "slat_flow_imgshape2tex_dit_1_3B_512_bf16",
+            "slat_flow_imgshape2tex_dit_1_3B_1024_bf16",
+            "shape_dec_next_dc_f16c32_fp16",
+            "tex_dec_next_dc_f16c32_fp16",
+        ];
+
+        let mut raw_files = Vec::new();
+        for stem in ckpt_pairs {
+            raw_files.push(
+                self.ensure_exists(
+                    self.raw_model_dir
+                        .join("ckpts")
+                        .join(format!("{stem}.json")),
+                )?,
+            );
+            raw_files.push(
+                self.ensure_exists(
+                    self.raw_model_dir
+                        .join("ckpts")
+                        .join(format!("{stem}.safetensors")),
+                )?,
+            );
+        }
+        raw_files.push(
+            self.ensure_exists(
+                self.raw_model_dir
+                    .join("external")
+                    .join("ss_dec")
+                    .join("ckpts")
+                    .join("ss_dec_conv3d_16l8_fp16.json"),
+            )?,
+        );
+        raw_files.push(
+            self.ensure_exists(
+                self.raw_model_dir
+                    .join("external")
+                    .join("ss_dec")
+                    .join("ckpts")
+                    .join("ss_dec_conv3d_16l8_fp16.safetensors"),
+            )?,
+        );
+        raw_files.push(
+            self.ensure_exists(
+                self.raw_model_dir
+                    .join("external")
+                    .join("dinov3")
+                    .join("config.json"),
+            )?,
+        );
+        raw_files.push(
+            self.ensure_exists(
+                self.raw_model_dir
+                    .join("external")
+                    .join("dinov3")
+                    .join("model.safetensors"),
+            )?,
+        );
+        raw_files.push(self.ensure_exists(self.raw_model_dir.join("pipeline.json"))?);
+
+        Ok(CanonicalizationPlan {
+            family: ModelFamily::Trellis2,
+            raw_format: RawWeightFormat::SafetensorsDirect,
+            raw_files: raw_files.into_boxed_slice(),
+            canonical_root: self.canonical_root.clone(),
+            canonical_filename: CANONICAL_FILENAME.to_string(),
+            future_loader: FutureWeightLoader::CandleMmapSafetensors,
+            license_note: "TRELLIS.2 code and the microsoft/TRELLIS.2-4B model card are MIT; the bundled DINOv3 encoder is a separately licensed gated Meta model; RMBG-2.0/BiRefNet background removal is excluded."
+                .to_string(),
         })
     }
 
@@ -444,7 +528,9 @@ fn load_canonical_package(
         if gguf_file.is_file() && expected_plan.is_none() {
             return load_standalone_gguf(family, gguf_file);
         }
-        return Err(Lux3dError::MissingCanonicalArtifact { path: canonical_file });
+        return Err(Lux3dError::MissingCanonicalArtifact {
+            path: canonical_file,
+        });
     }
 
     for required in [

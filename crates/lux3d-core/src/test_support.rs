@@ -95,6 +95,7 @@ pub fn raw_model_dir_env_var(family: ModelFamily) -> &'static str {
         ModelFamily::TripoSr => "LUX3D_TRIPOSR_RAW_MODEL_DIR",
         ModelFamily::TripoSg => "LUX3D_TRIPOSG_RAW_MODEL_DIR",
         ModelFamily::Vggt => "LUX3D_VGGT_RAW_MODEL_DIR",
+        ModelFamily::Trellis2 => "LUX3D_TRELLIS2_RAW_MODEL_DIR",
     }
 }
 
@@ -219,6 +220,7 @@ fn official_raw_model_repo_id(family: ModelFamily) -> &'static str {
         ModelFamily::TripoSr => "stabilityai/TripoSR",
         ModelFamily::TripoSg => "VAST-AI/TripoSG",
         ModelFamily::Vggt => "facebook/VGGT-1B",
+        ModelFamily::Trellis2 => "microsoft/TRELLIS.2-4B",
     }
 }
 
@@ -239,5 +241,26 @@ fn raw_model_required_files(family: ModelFamily) -> &'static [&'static str] {
             "vae/config.json",
         ],
         ModelFamily::Vggt => &["model.safetensors", "config.json"],
+        ModelFamily::Trellis2 => &[
+            "pipeline.json",
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.json",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.json",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+            "external/dinov3/config.json",
+            "external/dinov3/model.safetensors",
+        ],
     }
 }
