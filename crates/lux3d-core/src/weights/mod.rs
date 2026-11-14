@@ -384,7 +384,7 @@ impl WeightLocator {
             canonical_root: self.canonical_root.clone(),
             canonical_filename: CANONICAL_FILENAME.to_string(),
             future_loader: FutureWeightLoader::CandleMmapSafetensors,
-            license_note: "TRELLIS.2 code and the microsoft/TRELLIS.2-4B model card are MIT; the bundled DINOv3 encoder is a separately licensed gated Meta model; RMBG-2.0/BiRefNet background removal is excluded."
+            license_note: "TRELLIS.2 code and the microsoft/TRELLIS.2-4B model card are MIT; the bundled DINOv3 encoder is a separately licensed gated Meta model; RMBG-2.0/BiRefNet ships as the separate `rmbg-2.0` package under CC-BY-NC-4.0."
                 .to_string(),
         })
     }

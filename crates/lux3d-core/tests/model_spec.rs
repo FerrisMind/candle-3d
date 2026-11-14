@@ -528,8 +528,8 @@ fn trellis2_model_spec_is_source_truth_backed() {
             assert_eq!([0.485, 0.456, 0.406], preprocess.normalization.mean);
             assert_eq!([0.229, 0.224, 0.225], preprocess.normalization.std);
             assert!(
-                preprocess.no_alpha_behavior.contains("opaque"),
-                "no-alpha behavior must document the opaque fallback: {}",
+                preprocess.no_alpha_behavior.contains("RMBG-2.0"),
+                "no-alpha behavior must document the RMBG-2.0 path: {}",
                 preprocess.no_alpha_behavior
             );
         }
@@ -630,7 +630,6 @@ fn trellis2_model_spec_is_source_truth_backed() {
     );
 
     for excluded in [
-        "trellis2_rmbg_background_removal",
         "trellis2_mesh_postprocess",
         "trellis2_texture_atlas_uv",
         "trellis2_1536_cascade_and_single_1024",
@@ -641,6 +640,13 @@ fn trellis2_model_spec_is_source_truth_backed() {
             "missing contract exclusion `{excluded}`"
         );
     }
+    assert!(
+        !spec
+            .exclusions
+            .iter()
+            .any(|entry| entry.item == "trellis2_rmbg_background_removal"),
+        "RMBG-2.0 background removal must not be excluded"
+    );
     assert_eq!("MIT", spec.license_policy.repo_license);
     assert!(spec.license_policy.weight_license.contains("TRELLIS.2-4B"));
     for source_path in spec.used_source_paths().iter() {

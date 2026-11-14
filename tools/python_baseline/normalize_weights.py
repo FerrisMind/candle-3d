@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Normalize LuxRT model weights into canonical safetensors.")
     parser.add_argument(
         "--family",
-        choices=["pi3", "pi3x", "rmbg", "triposr", "triposg", "vggt", "trellis2"],
+        choices=["pi3", "pi3x", "rmbg", "rmbg2", "triposr", "triposg", "vggt", "trellis2"],
         required=True,
     )
     parser.add_argument("--repo-root", type=str, default=None)
@@ -279,6 +279,96 @@ def normalize_rmbg(raw_model_dir: Path, output_dir: Path) -> None:
         family="rmbg",
         output_dir=output_dir,
         raw_files=[raw_weight, raw_config, raw_preprocessor],
+        resolved_config=resolved_config,
+        tensors=tensors,
+    )
+
+
+# RMBG-2.0 is the BiRefNet/Swin-L background remover used by the TRELLIS.2
+# reference pipeline for RGB inputs. Like RMBG-1.4 it is an auxiliary package
+# with a separate, non-commercial license (`bria-rmbg-2.0`, CC-BY-NC 4.0);
+# keep it out of the MIT TRELLIS.2 canonical package.
+RMBG2_RAW_FILES = [
+    "model.safetensors",
+    "config.json",
+    "preprocessor_config.json",
+    "BiRefNet_config.py",
+    "birefnet.py",
+    "README.md",
+]
+
+
+def normalize_rmbg2(raw_model_dir: Path, output_dir: Path) -> None:
+    raw_files = [raw_model_dir / name for name in RMBG2_RAW_FILES]
+    for path in raw_files:
+        if not path.is_file():
+            raise RuntimeError(f"RMBG-2.0 raw file missing: {path}")
+    raw_weight = raw_model_dir / "model.safetensors"
+    tensors = load_file(str(raw_weight))
+    with safe_open(str(raw_weight), framework="pt", device="cpu") as handle:
+        if len(list(handle.keys())) != len(tensors):
+            raise RuntimeError("failed to read all RMBG-2.0 safetensors keys")
+    if not tensors:
+        raise RuntimeError("RMBG-2.0 checkpoint did not contain any tensors")
+
+    model_config = json.loads((raw_model_dir / "config.json").read_text(encoding="utf-8"))
+    preprocessor = json.loads(
+        (raw_model_dir / "preprocessor_config.json").read_text(encoding="utf-8")
+    )
+    resolved_config = {
+        "family": "rmbg2",
+        "architecture": "BiRefNet",
+        "upstream_model": "briaai/RMBG-2.0",
+        "license": {
+            "name": "bria-rmbg-2.0",
+            "url": "https://creativecommons.org/licenses/by-nc/4.0/deed.en",
+            "commercial_use": False,
+            "note": "Separate from the MIT-licensed TRELLIS.2 package; do not redistribute as part of TRELLIS.2.",
+        },
+        "model": model_config,
+        "preprocessor": preprocessor,
+        # The reference `trellis2/pipelines/rembg/BiRefNet.py` wrapper does NOT
+        # use the HF feature extractor. It resizes with torchvision
+        # `transforms.Resize((1024, 1024))` (Pillow BILINEAR), normalizes with
+        # ImageNet stats, takes `model(input)[-1].sigmoid()`, converts to a PIL
+        # mask with `(pred * 255).astype(uint8)` truncation, and resizes the
+        # mask back with Pillow `Image.resize()` (BICUBIC).
+        "reference_inference_input": {
+            "resize": [1024, 1024],
+            "resize_resample": "pillow_bilinear",
+            "value_range": [0.0, 1.0],
+            "mean": [0.485, 0.456, 0.406],
+            "std": [0.229, 0.224, 0.225],
+            "mask_activation": "sigmoid",
+            "mask_quantization": "truncate_uint8",
+            "mask_resize": "pillow_bicubic",
+        },
+        "architecture_config": {
+            "backbone": "swin_v1_l",
+            "embed_dim": 192,
+            "depths": [2, 2, 18, 2],
+            "num_heads": [6, 12, 24, 48],
+            "window_size": 12,
+            "patch_size": 4,
+            "mlp_ratio": 4.0,
+            "mul_scl_ipt": "cat",
+            "cxt_num": 3,
+            "squeeze_block": "BasicDecBlk_x1",
+            "dec_att": "ASPPDeformable",
+            "dec_ipt_split": True,
+            "dec_blk": "BasicDecBlk",
+            "ms_supervision": True,
+            "out_ref": True,
+            "batch_size": 4,
+            "in_ch": 3,
+            "out_ch": 1,
+        },
+    }
+
+    write_outputs(
+        family="rmbg2",
+        output_dir=output_dir,
+        raw_files=raw_files,
         resolved_config=resolved_config,
         tensors=tensors,
     )
@@ -752,6 +842,8 @@ def main() -> None:
         normalize_pi3x(raw_model_dir, output_dir)
     elif args.family == "rmbg":
         normalize_rmbg(raw_model_dir, output_dir)
+    elif args.family == "rmbg2":
+        normalize_rmbg2(raw_model_dir, output_dir)
     elif args.family == "triposr":
         normalize_triposr(raw_model_dir, output_dir)
     elif args.family == "triposg":
