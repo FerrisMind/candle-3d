@@ -15,6 +15,11 @@ use image::imageops::FilterType;
 mod attention_math;
 mod nn_blocks;
 
+/// Re-exported so the weights module (and its tests) can reshape GGUF-stored
+/// rank>4 tensors without reaching into the private `nn_blocks` module.
+#[cfg(test)]
+pub(crate) use nn_blocks::get_weight_shaped;
+
 /// Drain asynchronous weight-upload staging after one model layer/block.
 ///
 /// Vulkan and WGPU upload each tensor through backend staging buffers. Those
@@ -78,6 +83,16 @@ mod pi3x;
 mod point_camera_ops;
 mod resampling;
 mod rmbg;
+mod trellis2;
+mod trellis2_blocks;
+mod trellis2_dino;
+mod trellis2_dit;
+mod trellis2_mesh;
+mod trellis2_sampler;
+mod trellis2_sparse;
+mod trellis2_ss_dec;
+mod trellis2_tex;
+mod trellis2_vae;
 mod triposg;
 mod triposg_dino;
 mod triposg_dit;
@@ -96,6 +111,42 @@ pub use pi3x::{
     Pi3xVoPipeline,
 };
 pub use rmbg::{RmbgConfig, RmbgModel};
+pub use trellis2::{
+    TRELLIS2_CASCADE_HR_RESOLUTION, TRELLIS2_CASCADE_LR_RESOLUTION,
+    TRELLIS2_CASCADE_UPSAMPLE_TIMES, TRELLIS2_SHAPE_SLAT_MEAN, TRELLIS2_SHAPE_SLAT_STD,
+    TRELLIS2_TEX_NOISE_SALT, TRELLIS2_TEX_SLAT_MEAN, TRELLIS2_TEX_SLAT_STD,
+    TRELLIS2_VOXEL_MARGIN, Trellis2CascadeShape, Trellis2Pipeline, Trellis2PipelineConfig,
+    Trellis2Rng, Trellis2RunOptions, Trellis2Stages, quantize_hr_coords,
+    quantize_hr_coords_with_stop,
+};
+pub use trellis2_tex::{
+    TexDecodeOutput, Trellis2PbrLayout, Trellis2TexDecoder, Trellis2TexDit, concat_tex_input,
+    pbr_attrs_from_raw, query_vertex_attrs, query_vertex_colors, split_pbr_attrs,
+};
+pub use trellis2_blocks::{
+    Trellis2AdaLn, Trellis2CrossAttention, Trellis2DenseBlock, Trellis2FeedForward,
+    Trellis2QkRmsNorm, Trellis2Rope3d, Trellis2SelfAttention, Trellis2SparseBlock,
+    Trellis2TimestepEmbedder, chunk_modulation, cubic_token_coords, timestep_embedding,
+};
+pub use trellis2_dino::{Trellis2Dino, Trellis2DinoConfig};
+pub use trellis2_dit::{Trellis2SlatConfig, Trellis2SlatDit, Trellis2SsConfig, Trellis2SsDit};
+pub use trellis2_mesh::{
+    DualGridFields, DualGridMesh, flexible_dual_grid_to_mesh, softplus_stable,
+};
+pub use trellis2_sampler::{
+    Trellis2SampleTrace, Trellis2SamplerParams, guided_velocity, pred_to_xstart, sample_dense,
+    sample_sparse, ss_t_schedule, v_to_xstart_eps, xstart_to_pred,
+};
+pub use trellis2_sparse::{
+    Channel2SpatialOutput, CoordMap, SparseConv3d, Spatial2ChannelOutput, channel_to_spatial,
+    kernel_offset_delta, repeat_channels, sparse_cross_attention, sparse_self_attention,
+    spatial_to_channel,
+};
+pub use trellis2_ss_dec::{Trellis2SsDecoder, Trellis2SsDecoderConfig, occupancy_coords};
+pub use trellis2_vae::{
+    ShapeVaeBlockTrace, ShapeVaeDecodeOutput, Trellis2ShapeVaeConfig, Trellis2ShapeVaeDecoder,
+    decode_shape_mesh, dual_grid_fields,
+};
 pub(crate) use triposg::TRIPOSG_LATENT_CHANNELS;
 pub use triposg::{
     TripoSgInferenceOutput, TripoSgMeshBuffers, TripoSgPipeline, TripoSgPreparedInputs,

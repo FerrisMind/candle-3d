@@ -1,8 +1,37 @@
 use candle_core::quantized::{GgmlDType, QMatMul, QTensor};
-use candle_core::{DType, Result as CandleResult, Tensor};
+use candle_core::{DType, Result as CandleResult, Shape, Tensor};
 use candle_nn::Module;
 
 use crate::weights::VarBuilder;
+
+/// Fetch a tensor of the expected shape from a safetensors or GGUF backend.
+///
+/// Safetensors packages store every tensor at its original rank. Candle's
+/// GGUF reader caps tensor rank at four, so the quantizer stores rank>4
+/// tensors (3D convolution kernels) as flat vectors; this helper reshapes
+/// the dequantized vector back to the expected shape. The regular
+/// [`VarBuilder::get`] path is tried first, so safetensors loading is
+/// unchanged.
+pub(crate) fn get_weight_shaped(
+    vb: &VarBuilder,
+    shape: impl Into<Shape>,
+    name: &str,
+) -> CandleResult<Tensor> {
+    let shape = shape.into();
+    match vb.get(shape.clone(), name) {
+        Ok(tensor) => Ok(tensor),
+        Err(_) => {
+            let tensor = vb.get_unchecked(name)?;
+            if tensor.elem_count() != shape.elem_count() {
+                candle_core::bail!(
+                    "tensor `{name}` has {} elements, expected shape {shape:?}",
+                    tensor.elem_count()
+                );
+            }
+            tensor.reshape(&shape)
+        }
+    }
+}
 
 /// Linear layer that accepts either dense or GGUF-packed weights.
 ///
@@ -72,13 +101,12 @@ impl Module for Linear {
     }
 }
 
-fn load_linear(
-    vb: VarBuilder,
-    in_dim: usize,
-    out_dim: usize,
-    bias: bool,
-) -> CandleResult<Linear> {
-    let bias = if bias { Some(vb.get(out_dim, "bias")?) } else { None };
+fn load_linear(vb: VarBuilder, in_dim: usize, out_dim: usize, bias: bool) -> CandleResult<Linear> {
+    let bias = if bias {
+        Some(vb.get(out_dim, "bias")?)
+    } else {
+        None
+    };
     if let Some(qt) = vb.get_quantized("weight")? {
         if let Some(linear) = quantized_linear(qt, &vb, in_dim, out_dim, bias.clone())? {
             return Ok(linear);
@@ -135,11 +163,7 @@ pub(crate) fn linear(
 }
 
 /// `candle_nn::linear`-compatible constructor.
-pub(crate) fn linear_dense(
-    in_dim: usize,
-    out_dim: usize,
-    vb: VarBuilder,
-) -> CandleResult<Linear> {
+pub(crate) fn linear_dense(in_dim: usize, out_dim: usize, vb: VarBuilder) -> CandleResult<Linear> {
     load_linear(vb, in_dim, out_dim, true)
 }
 
