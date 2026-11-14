@@ -94,7 +94,7 @@ fn trellis2_spec_enums_tag_the_family_and_expose_source_paths() {
     let preprocess = PreprocessSpec::Trellis2(lux3d_core::Trellis2PreprocessSpec {
         input_layout: "HWC".to_string(),
         alpha_path: "rgba foreground bbox -> square crop -> premultiplied rgb".to_string(),
-        no_alpha_behavior: "treated as fully opaque; RMBG-2.0 excluded in this slice".to_string(),
+        no_alpha_behavior: "RMBG-2.0/BiRefNet produces alpha; no opaque fallback".to_string(),
         foreground_crop: "alpha_bbox_square_crop".to_string(),
         premultiply_alpha: true,
         target_sizes: vec![512, 1024],

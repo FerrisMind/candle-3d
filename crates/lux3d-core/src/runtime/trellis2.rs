@@ -88,7 +88,8 @@ use crate::contracts::Trellis2PipelineType;
 use crate::error::Lux3dError;
 use crate::export::Trellis2ExportStage;
 use crate::geometry::Trellis2GeometryStage;
-use crate::preprocess::Trellis2Preprocess;
+use crate::preprocess::{Trellis2BackgroundRemover, Trellis2Preprocess};
+use crate::runtime::Rmbg2Model;
 use crate::weights::{
     CanonicalWeightSetPaths, ModelAssetOptions, VarBuilder, load_canonical_weights,
 };
@@ -582,6 +583,10 @@ pub struct Trellis2Pipeline {
     pub geometry: Trellis2GeometryStage,
     pub export: Trellis2ExportStage,
     pub config: Trellis2PipelineConfig,
+    /// RMBG-2.0/BiRefNet background remover used for inputs without a usable
+    /// alpha channel. `None` makes RGB inputs fail in preprocessing (the
+    /// reference always runs RMBG; there is no opaque fallback).
+    pub rmbg: Option<Rmbg2Model>,
     /// Raw checkpoint dir + device when loaded through
     /// [`Self::load_from_raw_dir`].
     raw_dir: Option<(PathBuf, Device)>,
@@ -590,17 +595,32 @@ pub struct Trellis2Pipeline {
 impl Trellis2Pipeline {
     /// Load from the canonical weights package (no HF access).
     pub fn load(options: ModelAssetOptions) -> Result<Self> {
+        Self::load_with_rmbg(options, None, &Device::Cpu)
+    }
+
+    /// Canonical TRELLIS.2 load with an optional RMBG-2.0 package/GGUF/raw
+    /// directory for RGB inputs.
+    pub fn load_with_rmbg(
+        options: ModelAssetOptions,
+        rmbg_path: Option<&Path>,
+        rmbg_device: &Device,
+    ) -> Result<Self> {
         let weights = load_canonical_weights(ModelFamily::Trellis2, options)?;
         let config = weights
             .read_resolved_config_json()
             .map(|value| Trellis2PipelineConfig::from_resolved_config(&value))
             .unwrap_or_default();
+        let rmbg = match rmbg_path {
+            Some(path) => Some(Rmbg2Model::load_from_path(path, rmbg_device)?),
+            None => None,
+        };
         Ok(Self {
             weights: Some(weights),
             preprocess: Trellis2Preprocess::new(config.shape_resolution)?,
             geometry: Trellis2GeometryStage,
             export: Trellis2ExportStage,
             config,
+            rmbg,
             raw_dir: None,
         })
     }
@@ -609,6 +629,16 @@ impl Trellis2Pipeline {
     /// (`models/TRELLIS.2-4B` layout). Each stage opens its own checkpoint
     /// file with the canonical stage prefix applied.
     pub fn load_from_raw_dir(path: &Path, device: &Device) -> Result<Self> {
+        Self::load_from_raw_dir_with_rmbg(path, device, None)
+    }
+
+    /// Raw-checkpoint load with an optional RMBG-2.0 package/GGUF/raw
+    /// directory for RGB inputs.
+    pub fn load_from_raw_dir_with_rmbg(
+        path: &Path,
+        device: &Device,
+        rmbg_path: Option<&Path>,
+    ) -> Result<Self> {
         let mut config = Trellis2PipelineConfig::default();
         let pipeline_json = path.join("pipeline.json");
         if pipeline_json.is_file() {
@@ -633,14 +663,25 @@ impl Trellis2Pipeline {
             }
             let _ = prefix;
         }
+        let rmbg = match rmbg_path {
+            Some(path) => Some(Rmbg2Model::load_from_path(path, device)?),
+            None => None,
+        };
         Ok(Self {
             weights: None,
             preprocess: Trellis2Preprocess::new(config.shape_resolution)?,
             geometry: Trellis2GeometryStage,
             export: Trellis2ExportStage,
             config,
+            rmbg,
             raw_dir: Some((path.to_path_buf(), device.clone())),
         })
+    }
+
+    fn background_remover(&self) -> Option<&dyn Trellis2BackgroundRemover> {
+        self.rmbg
+            .as_ref()
+            .map(|model| model as &dyn Trellis2BackgroundRemover)
     }
 
     /// VarBuilder rooted at one stage's namespace: the returned builder
@@ -754,10 +795,9 @@ impl Trellis2Pipeline {
         Ok((cond, neg_cond))
     }
 
-    /// The preprocess stage at the cascade HR resolution: the reference
-    /// crops once and lets `get_cond` resize the same crop to each DINOv3
-    /// input size, so re-running the (deterministic, geometry-only)
-    /// preprocess at 1024 reproduces the reference `cond_1024` input exactly.
+    /// The preprocess stage at the cascade HR resolution. It only owns the
+    /// resolution-specific resize (`resize_crop`); the crop itself is shared
+    /// with the 512 stage.
     fn cascade_preprocess_hr(&self) -> Result<Trellis2Preprocess> {
         Trellis2Preprocess::new(TRELLIS2_CASCADE_HR_RESOLUTION)
     }
@@ -1838,9 +1878,9 @@ impl Trellis2Pipeline {
     }
 
     /// [`Self::run_from_path`] returning the full per-stage outputs. The
-    /// cascade branch prepares the source twice (512 and 1024 DINOv3 inputs)
-    /// — the crop geometry is deterministic, so this reproduces the
-    /// reference's single-crop/two-resize `cond_512` + `cond_1024` exactly.
+    /// cascade branch crops the source once (after at most one RMBG-2.0 run)
+    /// and resizes that crop to both 512 and 1024, matching the reference
+    /// `preprocess_image` -> `get_cond(512)`/`get_cond(1024)` flow.
     pub fn run_from_path_with_stages(
         &self,
         path: &Path,
@@ -1853,10 +1893,15 @@ impl Trellis2Pipeline {
                  pre-prepared images",
             ));
         }
+        // Reference `run()` calls `preprocess_image` once and then resizes
+        // that same crop for `cond_512` and `cond_1024`; never run RMBG twice.
+        let crop = self
+            .preprocess
+            .prepare_crop_from_path(path, self.background_remover())?;
         if options.pipeline_type == Trellis2PipelineType::Cascade1024 {
             let preprocess_hr = self.cascade_preprocess_hr()?;
-            let prepared = self.preprocess.prepare_inputs_from_path(path)?;
-            let prepared_hr = preprocess_hr.prepare_inputs_from_path(path)?;
+            let prepared = self.preprocess.resize_crop(&crop)?;
+            let prepared_hr = preprocess_hr.resize_crop(&crop)?;
             let (cond, neg_cond) = self.image_conditioning(&prepared, device)?;
             let pixel_values_hr = preprocess_hr
                 .normalized_pixel_values(&prepared_hr, device)
@@ -1877,7 +1922,7 @@ impl Trellis2Pipeline {
                 options,
             );
         }
-        let prepared = self.preprocess.prepare_inputs_from_path(path)?;
+        let prepared = self.preprocess.resize_crop(&crop)?;
         self.run_prepared(&prepared, device, options)
     }
 

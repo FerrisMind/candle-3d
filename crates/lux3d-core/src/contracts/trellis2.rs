@@ -29,9 +29,9 @@ impl Trellis2PipelineType {
 /// Raw image handed to the TRELLIS.2 preprocess stage.
 ///
 /// `rgba` carries per-pixel premultiplied-capable source alpha for the
-/// foreground-bbox/square-crop path; `rgb` is the fallback when the source
-/// carries no usable alpha (treated as fully opaque — the RMBG-2.0 background
-/// removal path is a documented contract exclusion in this slice).
+/// foreground-bbox/square-crop path; `rgb` is used when the source carries
+/// no usable alpha and is first passed through RMBG-2.0/BiRefNet to produce
+/// the alpha mask (a missing remover is an error, never an opaque fallback).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trellis2RawInput {
     pub original_size: SpatialSize,
