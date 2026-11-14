@@ -35,6 +35,14 @@ Examples:
       --variant q4_k=/path/to/quantized/triposr-q4_k \
       --source assets/input.png --device cuda \
       --output-dir out/eval-triposr
+
+  python scripts/eval_quantization.py trellis2 \
+      --binary target/release/lux3d-cli.exe \
+      --reference /path/to/canonical-weights/trellis2 \
+      --variant q4_k=/path/to/quantized/trellis2-q4_k.gguf \
+      --source test-assets/mesh-input.png --device cuda \
+      --output-dir out/eval-trellis2 -- \
+      --pipeline-type 512 --steps 12 --texture false --seed 42
 """
 
 from __future__ import annotations
@@ -56,7 +64,7 @@ from compare_geometry import (  # noqa: E402
     voxel_iou,
 )
 
-MESH_FAMILIES = {"triposg", "triposr"}
+MESH_FAMILIES = {"triposg", "triposr", "trellis2"}
 
 
 def run_one(

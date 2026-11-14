@@ -5,19 +5,24 @@
 //! fallback dtype. The resulting `model.gguf` sits next to the canonical
 //! `model.safetensors`; [`super::CanonicalWeightSetPaths::var_builder`] picks
 //! it up automatically.
+//!
+//! Candle's GGUF reader caps tensor rank at four, so tensors with a higher
+//! rank (3D convolution kernels) are stored as flat vectors; the runtime
+//! loaders reshape them back after dequantization
+//! ([`crate::runtime::nn_blocks::get_weight_shaped`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use candle_core::quantized::{gguf_file, GgmlDType, QTensor};
+use candle_core::quantized::{GgmlDType, QTensor, gguf_file};
 use candle_core::safetensors::MmapedSafetensors;
 use candle_core::{Device, Tensor};
 
 use crate::{
-    error::Lux3dError,
-    contracts::ModelFamily,
-    weights::{GGUF_FAMILY_KEY, GGUF_RESOLVED_CONFIG_KEY, RESOLVED_CONFIG_FILENAME},
     Result,
+    contracts::ModelFamily,
+    error::Lux3dError,
+    weights::{GGUF_FAMILY_KEY, GGUF_RESOLVED_CONFIG_KEY, RESOLVED_CONFIG_FILENAME},
 };
 
 /// Quantization policy for [`quantize_checkpoint`].
@@ -148,22 +153,23 @@ fn quantize_checkpoint_with_family(
 
     // SAFETY: the canonical file is read-only for the duration of this
     // function and the mapping is dropped before returning.
-    let mmap = unsafe { MmapedSafetensors::multi(std::slice::from_ref(&source)) }.map_err(
-        |err| Lux3dError::CanonicalWeightsValidation {
-            message: format!("failed to open {}: {err}", source.display()),
-        },
-    )?;
+    let mmap =
+        unsafe { MmapedSafetensors::multi(std::slice::from_ref(&source)) }.map_err(|err| {
+            Lux3dError::CanonicalWeightsValidation {
+                message: format!("failed to open {}: {err}", source.display()),
+            }
+        })?;
 
     let mut tensors = Vec::with_capacity(mmap.tensors().len());
     let mut quantized = 0usize;
     let mut fallback = 0usize;
     let mut skipped = 0usize;
     for (name, view) in mmap.tensors() {
-        let tensor = mmap
-            .load(&name, &Device::Cpu)
-            .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+        let tensor = mmap.load(&name, &Device::Cpu).map_err(|source| {
+            Lux3dError::CanonicalWeightsValidation {
                 message: format!("failed to load tensor `{name}`: {source}"),
-            })?;
+            }
+        })?;
         // GGML has no scalar dtype representation; training-only buffers such
         // as BatchNorm `num_batches_tracked` are skipped.
         if tensor.rank() == 0 {
@@ -171,6 +177,20 @@ fn quantize_checkpoint_with_family(
             continue;
         }
         let use_quant = should_quantize(&name, &tensor, &options);
+        // Candle's GGUF reader rejects tensors with more than four
+        // dimensions. The only rank>4 tensors in canonical packages are 3D
+        // convolution kernels; store them as flat vectors (never quantized:
+        // the rank check in `should_quantize` already saw the original rank)
+        // and let the runtime loaders reshape after dequantization.
+        let stored = if tensor.rank() > 4 {
+            tensor
+                .flatten_all()
+                .map_err(|source| Lux3dError::CanonicalWeightsValidation {
+                    message: format!("failed to flatten tensor `{name}`: {source}"),
+                })?
+        } else {
+            tensor
+        };
         let dtype = if use_quant {
             quantized += 1;
             options.dtype
@@ -178,7 +198,7 @@ fn quantize_checkpoint_with_family(
             fallback += 1;
             options.fallback
         };
-        let qtensor = QTensor::quantize(&tensor, dtype).map_err(|source| {
+        let qtensor = QTensor::quantize(&stored, dtype).map_err(|source| {
             Lux3dError::CanonicalWeightsValidation {
                 message: format!(
                     "failed to quantize tensor `{name}` {:?} to {dtype:?}: {source}",
@@ -195,22 +215,20 @@ fn quantize_checkpoint_with_family(
     // requested model family.
     let resolved_config_path = source.with_file_name(RESOLVED_CONFIG_FILENAME);
     let (embedded_resolved_config, architecture) = if resolved_config_path.is_file() {
-        let body =
-            fs::read_to_string(&resolved_config_path).map_err(|source_err| {
-                Lux3dError::ModelAssetIo {
-                    path: resolved_config_path.clone(),
-                    source: source_err,
-                }
-            })?;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&body).map_err(|source_err| {
-                Lux3dError::CanonicalWeightsValidation {
-                    message: format!(
-                        "failed to parse `{}`: {source_err}",
-                        resolved_config_path.display()
-                    ),
-                }
-            })?;
+        let body = fs::read_to_string(&resolved_config_path).map_err(|source_err| {
+            Lux3dError::ModelAssetIo {
+                path: resolved_config_path.clone(),
+                source: source_err,
+            }
+        })?;
+        let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|source_err| {
+            Lux3dError::CanonicalWeightsValidation {
+                message: format!(
+                    "failed to parse `{}`: {source_err}",
+                    resolved_config_path.display()
+                ),
+            }
+        })?;
         let architecture = resolve_architecture(Some(&parsed), family);
         let serialized = serde_json::to_string(&parsed).map_err(|source_err| {
             Lux3dError::CanonicalWeightsValidation {
@@ -263,8 +281,10 @@ fn quantize_checkpoint_with_family(
             gguf_file::Value::String(config.clone()),
         ));
     }
-    let metadata_refs: Vec<(&str, &gguf_file::Value)> =
-        metadata.iter().map(|(name, value)| (*name, value)).collect();
+    let metadata_refs: Vec<(&str, &gguf_file::Value)> = metadata
+        .iter()
+        .map(|(name, value)| (*name, value))
+        .collect();
     let tensor_refs: Vec<(&str, &QTensor)> = tensors
         .iter()
         .map(|(name, tensor)| (name.as_str(), tensor))
@@ -304,7 +324,10 @@ fn should_quantize(name: &str, tensor: &Tensor, options: &QuantizeOptions) -> bo
         return false;
     }
     if !options.prefixes.is_empty()
-        && !options.prefixes.iter().any(|prefix| name.starts_with(prefix))
+        && !options
+            .prefixes
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
     {
         return false;
     }
@@ -386,7 +409,10 @@ mod tests {
     #[test]
     fn architecture_prefers_config_architecture_then_family() {
         let explicit = serde_json::json!({"architecture": "BriaRMBG", "family": "rmbg"});
-        assert_eq!(resolve_architecture(Some(&explicit), "fallback"), "BriaRMBG");
+        assert_eq!(
+            resolve_architecture(Some(&explicit), "fallback"),
+            "BriaRMBG"
+        );
         let family = serde_json::json!({"family": "triposg"});
         assert_eq!(resolve_architecture(Some(&family), "fallback"), "triposg");
         let neither = serde_json::json!({"hidden_size": 64});
@@ -482,9 +508,13 @@ mod tests {
         let dir = scratch_dir("policy");
         let source = tiny_checkpoint(&dir, false);
         let output = dir.join("model.gguf");
-        let report =
-            quantize_checkpoint(&source, &output, ModelFamily::Vggt, QuantizeOptions::default())
-                .unwrap();
+        let report = quantize_checkpoint(
+            &source,
+            &output,
+            ModelFamily::Vggt,
+            QuantizeOptions::default(),
+        )
+        .unwrap();
         assert_eq!(report.tensors, 4);
         assert_eq!(report.quantized, 1);
         assert_eq!(report.fallback_tensors, 3);
@@ -526,13 +556,9 @@ mod tests {
             all_2d: true,
             ..QuantizeOptions::default()
         };
-        let report = quantize_checkpoint(
-            &source,
-            &dir.join("all_2d.gguf"),
-            ModelFamily::Vggt,
-            all_2d,
-        )
-        .unwrap();
+        let report =
+            quantize_checkpoint(&source, &dir.join("all_2d.gguf"), ModelFamily::Vggt, all_2d)
+                .unwrap();
         assert_eq!(report.quantized, 2);
 
         let prefixed = QuantizeOptions {
@@ -559,13 +585,8 @@ mod tests {
             dtype: GgmlDType::Q8K,
             ..QuantizeOptions::default()
         };
-        let err = quantize_checkpoint(
-            &source,
-            &dir.join("bad.gguf"),
-            ModelFamily::Vggt,
-            options,
-        )
-        .unwrap_err();
+        let err = quantize_checkpoint(&source, &dir.join("bad.gguf"), ModelFamily::Vggt, options)
+            .unwrap_err();
         assert!(err.to_string().contains("activation-side"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -636,6 +657,63 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Candle's GGUF reader caps tensor rank at four. Rank>4 tensors (3D
+    /// convolution kernels) must be stored flattened and reshaped back by the
+    /// runtime loader (`crate::runtime::get_weight_shaped`).
+    #[test]
+    fn rank_above_four_tensors_are_flattened_and_reshaped_back() {
+        let dir = scratch_dir("rank5");
+        let cpu = Device::Cpu;
+        let kernel = Tensor::rand(-0.05f32, 0.05f32, (2, 3, 3, 3, 4), &cpu).unwrap();
+        let mut tensors = HashMap::new();
+        tensors.insert("conv3d.weight".to_string(), kernel.clone());
+        tensors.insert(
+            "linear.weight".to_string(),
+            Tensor::rand(-0.05f32, 0.05f32, (64, 64), &cpu).unwrap(),
+        );
+        std::fs::write(dir.join("resolved_config.json"), r#"{"hidden_size":64}"#).unwrap();
+        let source = dir.join("model.safetensors");
+        candle_core::safetensors::save(&tensors, &source).unwrap();
+
+        let output = dir.join("model.gguf");
+        let report = quantize_checkpoint(
+            &source,
+            &output,
+            ModelFamily::Vggt,
+            QuantizeOptions::default(),
+        )
+        .unwrap();
+        // The rank-5 kernel is never quantized (rank != 2); the linear is.
+        assert_eq!(report.quantized, 1);
+        assert_eq!(report.fallback_tensors, 1);
+
+        let content = read_gguf(&output);
+        let info = &content.tensor_infos["conv3d.weight"];
+        assert_eq!(info.ggml_dtype, GgmlDType::F16);
+        assert_eq!(info.shape.dims(), &[2 * 3 * 3 * 3 * 4]);
+        assert_eq!(
+            content.tensor_infos["linear.weight"].shape.dims(),
+            &[64, 64]
+        );
+
+        // The runtime fetch path reshapes the flat vector back to the kernel.
+        let vb = candle_nn::VarBuilder::from_gguf(&output, candle_core::DType::F32, &cpu).unwrap();
+        let fetched =
+            crate::runtime::get_weight_shaped(&vb, (2, 3, 3, 3, 4), "conv3d.weight").unwrap();
+        assert_eq!(fetched.dims(), &[2, 3, 3, 3, 4]);
+        let diff = fetched
+            .sub(&kernel.to_dtype(candle_core::DType::F32).unwrap())
+            .unwrap()
+            .abs()
+            .unwrap()
+            .max_all()
+            .unwrap()
+            .to_scalar::<f32>()
+            .unwrap();
+        assert!(diff < 1e-4, "reshaped kernel diverged by {diff}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn standalone_gguf_without_embedded_config_is_rejected() {
         let dir = scratch_dir("standalone-no-config");
@@ -673,8 +751,7 @@ mod tests {
             fallback: GgmlDType::F16,
             ..QuantizeOptions::default()
         };
-        let report =
-            quantize_auxiliary_checkpoint(&source, &output, "rmbg", options).unwrap();
+        let report = quantize_auxiliary_checkpoint(&source, &output, "rmbg", options).unwrap();
         assert!(report.embedded_resolved_config);
         assert_eq!(report.skipped_tensors, 1);
         let content = read_gguf(&output);
@@ -687,8 +764,7 @@ mod tests {
 
         let paths = crate::weights::load_auxiliary_canonical_weights(&dir, "rmbg").unwrap();
         assert_eq!(paths.canonical_file, output);
-        let file_paths =
-            crate::weights::load_auxiliary_canonical_weights(&output, "rmbg").unwrap();
+        let file_paths = crate::weights::load_auxiliary_canonical_weights(&output, "rmbg").unwrap();
         assert_eq!(
             file_paths.read_resolved_config_json().unwrap()["hidden_size"],
             64
