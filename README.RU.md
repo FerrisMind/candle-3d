@@ -8,7 +8,7 @@
 
 <p align="center">
   <b>Rust workspace для clean-room 3D-инференса, инспекции контрактов и каноникализации весов.</b><br>
-  CUDA-first runtime для Pi3, Pi3X, TripoSR, VGGT и TripoSG.
+  CUDA-first runtime для Pi3, Pi3X, TripoSR, VGGT, TripoSG и TRELLIS.2.
 </p>
 
 <p align="center">
@@ -49,12 +49,17 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 - `triposg` — TripoSG: image-to-mesh инференс (DINOv2-large encoder, 21-блочный rectified-flow
   DiT, SDF VAE decoder/encoder, flash decoder + clean-room DiffDMC по умолчанию). Лицензия MIT;
   BriaRMBG 1.4 для RGB-входа поставляется отдельным пакетом `rmbg-1.4` под лицензией BRIA.
+- `trellis2` — TRELLIS.2-4B: image-to-3D инференс (DINOv3 ViT-L/16 encoder, SS flow DiT,
+  shape/texture SLAT flow-трансформеры, FlexiDualGrid VAE, O-Voxel dual-grid меш с PBR-атрибутами
+  вершин). Референсный `1024_cascade` pipeline по умолчанию: 12 шагов на стадию, guidance 7.5,
+  seed 42. Код и model card — MIT; встроенный DINOv3 — отдельная gated-модель Meta;
+  стадия RMBG-2.0/BiRefNet исключена — вход должен нести alpha-канал).
 
 ## Ключевые возможности
 
 - `lux3d-core` реализует контракты, загрузку runtime, экспорт и проверку весов.
 - `lux3d-cli` предоставляет команды `inspect`, `weights normalize` и `run`.
-- `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X, TripoSR, VGGT и TripoSG.
+- `lux3d-server-core` предоставляет OpenAI-style async HTTP API для Pi3, Pi3X, TripoSR, VGGT, TripoSG и TRELLIS.2.
 - Python baseline tooling описан в [`tools/python_baseline/README.md`](https://github.com/oxide-lab/Lux3d/blob/main/tools/python_baseline/README.md).
 - Лицензирование по каждому семейству моделей можно проверить через CLI перед распространением артефактов.
 - **Экспериментально:** инференс на Vulkan и WGPU через `--device vulkan` / `--device wgpu` (сборка с `--features vulkan` / `--features wgpu`). CUDA — основной бэкенд; для путей Pi3/Pi3X/TripoSR и VGGT есть проверки корректности на Vulkan, а для TripoSG — smoke-проверки Vulkan/WGPU (см. [Производительность](#производительность)). WGPU остаётся экспериментальным — может работать нестабильно, давать неверный результат или не запускаться в зависимости от железа и драйверов.
@@ -91,6 +96,7 @@ cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> pi3x
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposr
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> vggt
 cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> triposg
+cargo run -p lux3d-cli -- inspect --repo-root <runtime-root> trellis2
 ```
 
 ### Нормализация Canonical Weights
@@ -101,7 +107,12 @@ cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-mod
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposr-dir> --output-dir <canonical-triposr-dir> triposr
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposg-dir> --output-dir <canonical-triposg-dir> triposg
+cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-trellis2-dir> --output-dir <canonical-trellis2-dir> trellis2
 ```
+
+Нормализация TRELLIS.2 упаковывает плоский layout `microsoft/TRELLIS.2-4B` (семь пар
+`ckpts/*.json` + `*.safetensors` плюс конфиг/модели DINOv3) в canonical-пакет, который
+ожидают `Trellis2Pipeline::load` и сервер.
 
 ### Квантование Весов в GGUF
 
@@ -147,6 +158,15 @@ cargo run -p lux3d-cli -- weights quantize pi3x `
 cargo run -p lux3d-cli -- weights quantize triposr `
   --source <canonical-triposr-dir>/model.safetensors `
   --output <gguf-triposr-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
+# TRELLIS.2: квантуются только линейные слои flow-DiT (путь `QMatMul`);
+# тензоры DINOv3/VAE/декодеров, 3D-свёртки, нормы и смещения остаются F16
+# (их загрузчики читают плотные тензоры). F16-сборка строится без префиксов.
+cargo run -p lux3d-cli -- weights quantize trellis2 `
+  --source <canonical-trellis2-dir>/model.safetensors `
+  --output trellis2-q8_0.gguf --dtype q8_0 --fallback-dtype f16 `
+  --prefix ss_flow. --prefix shape_dit_512. --prefix shape_dit_1024. `
+  --prefix tex_dit_512. --prefix tex_dit_1024.
 
 # RMBG-1.4 — вспомогательный пакет: отдельный GGUF, F16, те же правила standalone.
 cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
@@ -203,6 +223,12 @@ TripoSR 1 изображение при `--mc-resolution 256`):
 | TripoSR | q6_k | 0.33 GiB | 235 |
 | TripoSR | q5_k | 0.27 GiB | 235 |
 | TripoSR | q4_k | 0.23 GiB | 235 |
+| TRELLIS.2-4B | canonical (смесь BF16/F16/F32) | 15.07 GiB | — |
+| TRELLIS.2-4B | f16 | 14.50 GiB | все тензоры |
+| TRELLIS.2-4B | q8_0 | 8.87 GiB | 1074 линейных слоёв DiT |
+| TRELLIS.2-4B | q6_k | 7.41 GiB | 1070 |
+| TRELLIS.2-4B | q5_k | 6.61 GiB | 1070 |
+| TRELLIS.2-4B | q4_k | 5.86 GiB | 1070 |
 
 F16 — чистое преобразование точности, не блочное квантование: все тензоры
 хранятся в 16 битах, линейные слои идут обычным путём без `QMatMul`. Цена —
@@ -210,6 +236,16 @@ F16 — чистое преобразование точности, не бло�
 дрейф не больше 0.034% / 0.042% / 0.0014% CD (Pi3/Pi3X/TripoSR) при
 F@1% = 1.000 на каждом бэкенде. Сборка:
 `--dtype f16 --fallback-dtype f16`.
+
+Квантование TRELLIS.2-4B — только DiT по политике: пять flow-трансформеров
+(`ss_flow`, `shape_dit_512/1024`, `tex_dit_512/1024`) грузят линейные слои
+через путь `QMatMul`, а DINOv3 (`image_cond`), разреженные VAE-декодеры и
+плотный structure-декодер читают плотные тензоры (3D-свёртки, нормы), поэтому
+эти стадии остаются F16 во всех вариантах. GGUF-контейнер candle ограничивает
+ранг тензора четырьмя, поэтому 3D-свёртки хранятся сплющенными, и загрузчик
+возвращает им форму. K-кванты пропускают четыре матрицы `input_layer`, длина
+строки которых не делится на блок 256; Q8_0 дополнительно пропускает ещё одну
+(строка длины 8).
 
 У TripoSR Q8_0 квантует 244 матрицы; K-кванты используют блок 256, поэтому
 девять матриц с длиной строки не кратной 256 остаются в F16.
@@ -247,6 +283,12 @@ python scripts/eval_quantization.py triposr --binary target/release/lux3d-cli.ex
   --reference <canonical-triposr-dir> --variant q4_k=<dir-q4_k> `
   --source <input-image> --device cuda --output-dir out/eval-triposr `
   --mc-resolution 256 --mc-threshold 25.0
+
+# TRELLIS.2 (варианты — standalone `.gguf`-файлы, не каталоги)
+python scripts/eval_quantization.py trellis2 --binary target/release/lux3d-cli.exe `
+  --reference <canonical-trellis2-dir> --variant q8_0=trellis2-q8_0.gguf `
+  --source <input-image> --device cuda --output-dir out/eval-trellis2 -- `
+  --pipeline-type 512 --steps 12 --texture false --seed 42
 ```
 
 Дрейф меша TripoSG (2 шага, 1024 токена, depth 5; эталон — F32 той же
@@ -357,6 +399,41 @@ Q4_K/Q5_K для него практичны. VGGT чувствителен к �
 matting-сеть, держим её отдельным F16 GGUF: размер вдвое меньше, дрейф маски
 не измеряется.
 
+Дрейф меша TRELLIS.2-4B (CUDA, RTX 3060 12 GiB; пайплайн 512, 12 шагов на
+сэмплер, seed 42, текстуры выключены, `mesh-input.png`; эталон — canonical
+F32 на той же подложке). F16 практически точен; выход O-Voxel dual-grid
+дискретен, поэтому квантование переключает часть воксельных оккупаций —
+voxel IoU измеряет именно дрейф топологии, а не позиции:
+
+| вариант | CD rel | F@0.5% | F@1% | voxel IoU | normal | вершин (реф. 914,470) | загрузка | инференс |
+|---|---|---|---|---|---|---|---|---|
+| f16 | 0.0027% | 0.9999 | 1.000 | 0.996 | 0.993 | 914,157 | 0.03 s | 142.8 s |
+| q8_0 | 0.187% | 0.9139 | 0.9835 | 0.623 | 0.904 | 943,514 | 0.03 s | 98.7 s |
+| q6_k | 0.199% | 0.9181 | 0.9813 | 0.609 | 0.905 | 952,678 | 0.03 s | 100.5 s |
+| q5_k | 0.274% | 0.8839 | 0.9729 | 0.445 | 0.890 | 893,909 | 0.03 s | 96.3 s |
+| q4_k | 0.311% | 0.8331 | 0.9625 | 0.400 | 0.885 | 887,078 | 0.03 s | 95.7 s |
+
+Квантованные линейные слои DiT ещё и быстрее: 12-шаговый пайплайн 512 идёт за
+~96–101 с при Q8_0 и ниже против 135 с на F32 и 143 с на F16 — ядра `QMatMul`
+не делают проход деквантования. Производственные варианты — Q8_0/Q6_K
+(F@1% ≥ 0.98, нормали ≥ 0.90); Q5_K/Q4_K — для превью. Путь `1024_cascade`
+проверен от конца до конца на квантованных весах Q4_K (2-шаговый прогон с
+текстурами: SS DiT, shape DiT 512/1024 и texture DiT грузятся через
+`QMatMul` и декодируются).
+
+Проверка бэкендов на реальных весах (один вход, seed 42): geometry-only прогон
+512 проходит на CPU, CUDA, Vulkan и WGPU; полный `1024_cascade` с текстурами
+проходит на CUDA за 438 с с **пиком 7.8 GiB** на RTX 3060 12 GiB. GGUF-варианты
+F16 и Q8_0 работают на всех четырёх тестируемых бэкендах. K-кванты
+(Q4_K/Q5_K/Q6_K) работают на CPU, CUDA и Vulkan, но падают на WGPU при таком
+размере модели: dispatch Q8K-раундтрипа активаций в candle превышает лимит
+65 535 workgroup для MLP шириной 8 192; до исправления ядра candle безопасный
+квантованный выбор для WGPU — Q8_0. На Vulkan дополнительно потребовался
+Lux3D-workaround для неограниченного `index_select` в candle при >65 535 строк
+(разреженные VAE-gather'ы достигают ~500k строк на разрешении 512): рантайм
+режет gather на чанки лимитного размера, после чего Vulkan совпадает с CPU/CUDA
+по геометрии и детерминирован от запуска к запуску.
+
 ### Запуск Инференса
 
 ```powershell
@@ -388,11 +465,23 @@ cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-tr
 # Автоскачивание canonical package TripoSG (oxide-lab/TripoSG); RMBG 1.4 — отдельный пакет
 cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.glb>
 
+# TRELLIS.2 -> текстурированный GLB + PBR-sidecar из canonical package
+# (по умолчанию: pipeline 1024_cascade, 12 шагов на сэмплер, guidance 7.5, seed 42, текстура включена)
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --output <output-file.glb>
+# Прогон без текстур (без texture SLAT / tex VAE / PBR-sidecar):
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --texture false --output <output-file.glb>
+# Быстрый pipeline 512 с переопределениями:
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --pipeline-type 512 --steps 12 --seed 42 --output <preview.glb>
+# Сырой каталог checkpoint'ов microsoft/TRELLIS.2-4B (pipeline.json + ckpts/) принимается как есть:
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <raw-TRELLIS.2-4B-dir> --source <input-image> --output <output-file.glb>
+
 # Автоскачивание canonical packages из Hugging Face в пользовательский cache
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
 ```
 
-**Форматы вывода:** mesh-команды (`triposr`, `triposg`) выбирают writer по расширению: `.glb` (основной/по умолчанию), `.obj`, `.ply`, `.stl`. Point-cloud команды (`pi3`, `pi3x`, `vggt`) — `.ply` (основной) или `.xyz`. HTTP mesh API по умолчанию отдаёт GLB, point-cloud API — PLY; формат задаётся `options.output_format` (`glb`/`obj`/`ply`/`stl` и `ply`/`xyz` соответственно).
+**Форматы вывода:** mesh-команды (`triposr`, `triposg`, `trellis2`) выбирают writer по расширению: `.glb` (основной/по умолчанию), `.obj`, `.ply` (`.stl` для `trellis2` недоступен). Point-cloud команды (`pi3`, `pi3x`, `vggt`) — `.ply` (основной) или `.xyz`. HTTP mesh API по умолчанию отдаёт GLB, point-cloud API — PLY; формат задаётся `options.output_format` (`glb`/`obj`/`ply`/`stl` и `ply`/`xyz` соответственно). Текстурированный прогон `trellis2` дополнительно пишет пару sidecar-файлов `<stem>.pbrvox.bin` + `<stem>.pbr.json` рядом с выводом: PBR-атрибуты вершин (6 каналов) на разреженной воксельной сетке не помещаются в форматы GLB/OBJ/PLY, поэтому sidecar сохраняет их без потерь.
+
+> **Заметки по TRELLIS.2:** `--pipeline-type` принимает `512`, `1024` или `1024_cascade` (референсный дефолт). Путь с одиночным разрешением `1024` и каскад на 1536 токенов пока не реализованы и падают в рантайме. Вход должен нести alpha-канал — референсное удаление фона RMBG-2.0/BiRefNet является задокументированным исключением (полностью непрозрачный RGB обрабатывается как есть). Постобработка меша (`fill_holes`, decimation) и развёртка texture-atlas UV исключены; меш — это поверхность O-Voxel dual-grid с PBR-цветами вершин в sidecar. Стадии весов загружаются последовательно (~7.8 GiB измеренный пик на `1024_cascade` при резидентных текстурных стадиях); инференс на CPU работает, но медленный. Автоскачивание из `oxide-lab/TRELLIS.2-4B` зарезервировано, но репозиторий ещё не опубликован, поэтому передавайте явный `--model-path` (canonical-пакет или сырой каталог checkpoint'ов).
 
 > **Экспериментальные бэкенды (Vulkan / WGPU):** выбор устройства через `--device`:
 >
@@ -461,6 +550,7 @@ grace 2; WGPU: блоки аллокатора 2 MiB) Vulkan укладывае�
 - Бэкенд Metal на macOS в этом репозитории не тестировался, но теоретически может поддерживаться.
 - Директории canonical model package, переданные через `--model-path`, либо автоматически скачанные из Hugging Face в пользовательский cache
 - TripoSG требует примерно 8.3–8.7 GiB на preview с 1024 токенами (9.1 GiB с 2048 токенами) на всех трёх бэкендах; для эталонного прогона на 50 шагов рекомендуется 16 GiB+.
+- TRELLIS.2 загружает stage-checkpoint'ы последовательно и достигает ~7.8 GiB пика при резидентных текстурных стадиях на прогоне `1024_cascade` (прогоны без текстур легче); карта 12 GiB вмещает его с запасом ~4 GiB, инференс на CPU работает, но медленный. Сервер загружает только canonical-пакет; сырой каталог checkpoint'ов `microsoft/TRELLIS.2-4B` — loader только для CLI.
 
 ## Лицензия
 
@@ -471,3 +561,5 @@ Upstream-модельные артефакты и canonical weights сохран
 **VGGT-1B:** оригинальный код и checkpoint `facebook/VGGT-1B` — CC-BY-NC-4.0 (non-commercial). Для коммерческого использования нужен отдельно распространяемый `facebook/VGGT-1B-Commercial`. Canonical package для `--model-path`/автоскачивания публикуется как `oxide-lab/VGGT-1B`; сырой upstream checkpoint остаётся в `facebook/VGGT-1B`. Нативный track head в этом inference slice намеренно не реализован; исключение зафиксировано в контракте.
 
 **TripoSG:** upstream-код и веса — MIT. Сырой checkpoint лежит в `VAST-AI/TripoSG`; canonical package для `--model-path`/автоскачивания публикуется как `oxide-lab/TripoSG`. Upstream `load_image` использует BriaRMBG 1.4, когда нет валидной alpha-маски; Lux3D реализует этот fallback полностью. Веса RMBG не входят в MIT-пакет TripoSG: они нормализованы в отдельный canonical package `rmbg-1.4` (лицензия BRIA, source-available/non-commercial; для коммерческого использования нужна лицензия BRIA) и подключаются через `--rmbg-model-path` или соседнюю папку `rmbg-1.4`. Upstream pipeline по умолчанию использует flash decoder (`use_flash_decoder=True`, `flash_octree_depth=9`); Lux3D реализует тот же flash SDF-планировщик и clean-room Rust DiffDMC. Код и таблицы Diso (CC BY-NC 4.0) не копируются, поэтому на редких ambiguous-ячейках топология может отличаться; non-flash путь остаётся доступен через `--flash-decoder false`. Также реализован полный VAE encode API (FPS-сэмплирование, `vae.quant`, распределение mean/logvar/std), хотя image-to-3D pipeline вызывает только `vae.decode`.
+
+**TRELLIS.2:** upstream-код (`microsoft/TRELLIS.2`) и model card `microsoft/TRELLIS.2-4B` лицензированы под MIT; референс зеркалируется в `candle-3d-refs/TRELLIS.2`. Получите веса в upstream-репозитории и нормализуйте командой `weights normalize ... trellis2` перед запуском. Встроенный DINOv3 ViT-L/16 — отдельная gated-модель Meta со своей лицензией; проверьте её условия независимо, доступ к DINOv3 может требоваться отдельно от TRELLIS.2. RMBG-2.0/BiRefNet в этот пайплайн не входит: стадия удаления фона исключена, подавайте изображения с валидным alpha-каналом.
