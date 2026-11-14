@@ -26,6 +26,27 @@ fn required_raw_filenames(family: ModelFamily) -> &'static [&'static str] {
             "vae/config.json",
         ],
         ModelFamily::Vggt => &["model.safetensors", "config.json"],
+        ModelFamily::Trellis2 => &[
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.json",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.json",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+            "external/dinov3/config.json",
+            "external/dinov3/model.safetensors",
+            "pipeline.json",
+        ],
     }
 }
 
@@ -305,6 +326,282 @@ fn triposg_locator_finds_the_local_raw_checkpoint_dir() {
     assert_eq!(RawWeightFormat::SafetensorsDirect, weights.raw_format);
     assert_eq!("model.safetensors", weights.canonical_filename);
     assert!(weights.license_note.contains("MIT"));
+}
+
+fn trellis2_ckpt_stems() -> [&'static str; 7] {
+    [
+        "ss_flow_img_dit_1_3B_64_bf16",
+        "slat_flow_img2shape_dit_1_3B_512_bf16",
+        "slat_flow_img2shape_dit_1_3B_1024_bf16",
+        "slat_flow_imgshape2tex_dit_1_3B_512_bf16",
+        "slat_flow_imgshape2tex_dit_1_3B_1024_bf16",
+        "shape_dec_next_dc_f16c32_fp16",
+        "tex_dec_next_dc_f16c32_fp16",
+    ]
+}
+
+#[test]
+fn trellis2_locator_finds_raw_component_files_in_locator_order() {
+    let (root, raw_model_dir, canonical_dir) = create_raw_fixture(ModelFamily::Trellis2);
+    let locator = WeightLocator::new(raw_model_dir.clone(), canonical_dir.clone());
+    let weights = locator
+        .locate(ModelFamily::Trellis2)
+        .expect("trellis2 weights");
+
+    assert_eq!(ModelFamily::Trellis2, weights.family);
+    assert_eq!(RawWeightFormat::SafetensorsDirect, weights.raw_format);
+    let expected: Vec<PathBuf> = required_raw_filenames(ModelFamily::Trellis2)
+        .iter()
+        .map(|relative| raw_model_dir.join(relative))
+        .collect();
+    assert_eq!(19, expected.len());
+    assert_eq!(expected, weights.raw_files.to_vec());
+    assert_eq!(canonical_dir, weights.canonical_root);
+    assert_eq!("model.safetensors", weights.canonical_filename);
+    assert_eq!(
+        FutureWeightLoader::CandleMmapSafetensors,
+        weights.future_loader
+    );
+    assert!(weights.license_note.contains("MIT (Microsoft)"));
+    assert!(weights.license_note.contains("DINOv3"));
+
+    // Missing one component must fail loudly (no partial plans).
+    let broken_root = temp_fixture_root("trellis2-broken");
+    let broken_raw = broken_root.join("raw");
+    let broken_canonical = broken_root.join("canonical").join("trellis2");
+    fs::create_dir_all(&broken_raw).expect("broken raw dir");
+    fs::write(broken_raw.join("pipeline.json"), b"{}").expect("pipeline fixture");
+    let broken_locator = WeightLocator::new(broken_raw, broken_canonical);
+    assert!(
+        broken_locator.locate(ModelFamily::Trellis2).is_err(),
+        "locator must reject a raw tree missing the ckpt components"
+    );
+    cleanup_dir(&broken_root);
+    cleanup_dir(&root);
+}
+
+/// Exact real-tree tensor counts per stage (from the weights inventory); the
+/// normalizer hard-fails on a mismatch, so synthetic fixtures must match.
+fn trellis2_stage_tensor_counts() -> [(&'static str, usize); 9] {
+    [
+        ("image_cond", 415),
+        ("ss_flow", 640),
+        ("ss_dec", 74),
+        ("shape_dit_512", 640),
+        ("shape_dit_1024", 640),
+        ("shape_dec", 292),
+        ("tex_dit_512", 640),
+        ("tex_dit_1024", 640),
+        ("tex_dec", 284),
+    ]
+}
+
+fn write_trellis2_safetensors_fixture(raw_dir: &Path) {
+    use std::collections::BTreeMap;
+
+    let tensor_data: Vec<u8> = (0..64u32).flat_map(|v| v.to_le_bytes()).collect();
+    let write_shard =
+        |relative: &str, count: usize, dtype: safetensors::Dtype, shape: Vec<usize>| {
+            let needed: usize =
+                shape.iter().product::<usize>() * ((dtype.bitsize() as usize).div_ceil(8));
+            assert!(
+                needed <= tensor_data.len(),
+                "fixture data slice must cover {needed} bytes"
+            );
+            let tensors: BTreeMap<String, safetensors::tensor::TensorView> = (0..count)
+                .map(|index| {
+                    (
+                        format!("t{index}"),
+                        safetensors::tensor::TensorView::new(
+                            dtype,
+                            shape.clone(),
+                            &tensor_data[..needed],
+                        )
+                        .expect("fixture tensor view"),
+                    )
+                })
+                .collect();
+            let path = raw_dir.join(relative);
+            fs::create_dir_all(path.parent().expect("shard parent")).expect("shard dir");
+            safetensors::serialize_to_file(tensors, None, &path).expect("write shard fixture");
+        };
+
+    write_shard(
+        "external/dinov3/model.safetensors",
+        415,
+        safetensors::Dtype::F32,
+        vec![1, 1, 2],
+    );
+    for stem in [
+        "ss_flow_img_dit_1_3B_64_bf16",
+        "slat_flow_img2shape_dit_1_3B_512_bf16",
+        "slat_flow_img2shape_dit_1_3B_1024_bf16",
+        "slat_flow_imgshape2tex_dit_1_3B_512_bf16",
+        "slat_flow_imgshape2tex_dit_1_3B_1024_bf16",
+    ] {
+        write_shard(
+            &format!("ckpts/{stem}.safetensors"),
+            640,
+            safetensors::Dtype::BF16,
+            vec![2, 1],
+        );
+    }
+    write_shard(
+        "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+        74,
+        safetensors::Dtype::F16,
+        vec![1],
+    );
+    write_shard(
+        "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+        292,
+        safetensors::Dtype::F16,
+        vec![2],
+    );
+    write_shard(
+        "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors",
+        284,
+        safetensors::Dtype::F16,
+        vec![2],
+    );
+
+    for stem in trellis2_ckpt_stems() {
+        let path = raw_dir.join("ckpts").join(format!("{stem}.json"));
+        fs::write(&path, format!(r#"{{"class_name": "{stem}"}}"#)).expect("ckpt config fixture");
+    }
+    fs::create_dir_all(raw_dir.join("external").join("ss_dec").join("ckpts")).expect("ss_dec dir");
+    fs::write(
+        raw_dir
+            .join("external")
+            .join("ss_dec")
+            .join("ckpts")
+            .join("ss_dec_conv3d_16l8_fp16.json"),
+        r#"{"out_channels": 1}"#,
+    )
+    .expect("ss_dec config fixture");
+    fs::create_dir_all(raw_dir.join("external").join("dinov3")).expect("dinov3 dir");
+    fs::write(
+        raw_dir.join("external").join("dinov3").join("config.json"),
+        r#"{"hidden_size": 1024}"#,
+    )
+    .expect("dinov3 config fixture");
+    fs::write(
+        raw_dir.join("pipeline.json"),
+        r#"{"name": "Trellis2ImageTo3DPipeline", "args": {
+            "sparse_structure_sampler": {"steps": 12},
+            "shape_slat_normalization": {"mean": [0.781296], "std": [5.972266]},
+            "tex_slat_normalization": {"mean": [3.501659], "std": [2.665652]}
+        }}"#,
+    )
+    .expect("pipeline fixture");
+}
+
+#[test]
+fn trellis2_python_normalizer_merges_stages_and_provenance_keys() {
+    let root = temp_fixture_root("trellis2-normalizer");
+    let raw_model_dir = root.join("raw");
+    let output_dir = root.join("canonical").join("trellis2");
+    fs::create_dir_all(&raw_model_dir).expect("raw fixture dir");
+    write_trellis2_safetensors_fixture(&raw_model_dir);
+
+    run_python_normalizer(ModelFamily::Trellis2, &raw_model_dir, &output_dir);
+
+    let manifest: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("manifest.json")).expect("read trellis2 manifest"),
+    )
+    .expect("parse trellis2 manifest");
+    assert_eq!("trellis2", manifest["family"]);
+    // Every raw basename is unique, so provenance keys stay bare and follow
+    // the locator order exactly.
+    let expected_raw_files: Vec<String> = required_raw_filenames(ModelFamily::Trellis2)
+        .iter()
+        .map(|relative| {
+            Path::new(relative)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("basename")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(serde_json::json!(expected_raw_files), manifest["raw_files"]);
+    assert_eq!(19, manifest["raw_files"].as_array().expect("array").len());
+    assert_eq!(4265, manifest["tensor_count"]);
+    assert_eq!(
+        serde_json::json!({"BF16": 3200, "F16": 650, "F32": 415}),
+        manifest["dtype_histogram"]
+    );
+    assert_eq!(
+        19,
+        manifest["source_checksums"].as_object().expect("map").len()
+    );
+
+    let canonical_bytes =
+        fs::read(output_dir.join("model.safetensors")).expect("read canonical fixture");
+    let tensors =
+        safetensors::SafeTensors::deserialize(&canonical_bytes).expect("deserialize fixture");
+    assert_eq!(4265, tensors.len());
+    for (prefix, count) in trellis2_stage_tensor_counts() {
+        let stage_keys = tensors
+            .names()
+            .iter()
+            .filter(|key| key.starts_with(&format!("{prefix}.")))
+            .count();
+        assert_eq!(count, stage_keys, "stage `{prefix}` tensor count");
+    }
+    let probe = tensors.tensor("image_cond.t0").expect("image_cond probe");
+    assert_eq!(safetensors::Dtype::F32, probe.dtype());
+    let probe = tensors.tensor("ss_flow.t0").expect("ss_flow probe");
+    assert_eq!(safetensors::Dtype::BF16, probe.dtype());
+    let probe = tensors.tensor("shape_dec.t291").expect("shape_dec probe");
+    assert_eq!(safetensors::Dtype::F16, probe.dtype());
+
+    let resolved: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(output_dir.join("resolved_config.json")).expect("read resolved config"),
+    )
+    .expect("parse resolved config");
+    assert_eq!("trellis2", resolved["family"]);
+    assert_eq!(
+        serde_json::json!(12),
+        resolved["pipeline_args"]["sparse_structure_sampler"]["steps"]
+    );
+    assert_eq!(
+        serde_json::json!([0.781296]),
+        resolved["normalization"]["shape_slat"]["mean"]
+    );
+    for prefix in [
+        "image_cond",
+        "ss_flow",
+        "ss_dec",
+        "shape_dit_512",
+        "shape_dit_1024",
+        "shape_dec",
+        "tex_dit_512",
+        "tex_dit_1024",
+        "tex_dec",
+    ] {
+        assert!(
+            resolved["stage_configs"].get(prefix).is_some(),
+            "missing stage config `{prefix}`"
+        );
+    }
+
+    // Locator plan plus the Python-written package must validate together.
+    let locator = WeightLocator::new(raw_model_dir.clone(), output_dir.clone());
+    let plan = locator
+        .locate(ModelFamily::Trellis2)
+        .expect("trellis2 weights");
+    let canonical = ensure_canonical_weights(&plan).expect("trellis2 canonical package");
+    assert_eq!(4265, canonical.manifest.tensor_count);
+    assert_eq!(19, canonical.manifest.raw_files.len());
+    assert_eq!(ModelFamily::Trellis2, canonical.manifest.family);
+
+    // Second run must hit the idempotency fast path.
+    let manifest_before = fs::read_to_string(output_dir.join("manifest.json")).expect("before");
+    run_python_normalizer(ModelFamily::Trellis2, &raw_model_dir, &output_dir);
+    let manifest_after = fs::read_to_string(output_dir.join("manifest.json")).expect("after");
+    assert_eq!(manifest_before, manifest_after);
+
+    cleanup_dir(&root);
 }
 
 #[test]
@@ -741,4 +1038,91 @@ fn run_python_normalizer(family: ModelFamily, raw_model_dir: &Path, output_dir: 
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+}
+
+// T10: the standalone TRELLIS.2 GGUF package (DiT-only quantization policy)
+// must load on its own: embedded resolved config, `lux3d.family` metadata,
+// a Q8_0-packed DiT linear for the `QMatMul` path, and F16 dense fallback
+// tensors for the dense-read loaders (DINOv3 / VAEs). Gated on the artifact
+// produced by `weights quantize --family trellis2`; skipped when absent.
+#[test]
+fn trellis2_standalone_gguf_package_loads() {
+    let gguf = lux3d_core::test_support::runtime_root()
+        .join("3d")
+        .join("huggingface")
+        .join("TRELLIS.2-4B-GGUF")
+        .join("trellis2-q8_0.gguf");
+    if !gguf.is_file() {
+        eprintln!(
+            "skipping trellis2_standalone_gguf_package_loads: no package at {}",
+            gguf.display()
+        );
+        return;
+    }
+
+    let weights = load_canonical_weights(
+        ModelFamily::Trellis2,
+        ModelAssetOptions {
+            canonical_dir: Some(gguf.clone()),
+            cache_dir: None,
+        },
+    )
+    .expect("standalone trellis2 gguf package");
+    assert_eq!(weights.canonical_file, gguf);
+    let config = weights
+        .read_resolved_config_json()
+        .expect("embedded resolved config");
+    assert!(
+        config.get("pipeline_args").is_some() && config.get("stage_configs").is_some(),
+        "trellis2 resolved config must carry the pipeline defaults and stage configs"
+    );
+
+    let content = {
+        let mut file = fs::File::open(&gguf).expect("open gguf");
+        candle_core::quantized::gguf_file::Content::read(&mut file).expect("gguf header")
+    };
+    match content.metadata.get("lux3d.family") {
+        Some(candle_core::quantized::gguf_file::Value::String(family)) => {
+            assert_eq!(family, "trellis2")
+        }
+        other => panic!("missing lux3d.family metadata: {other:?}"),
+    }
+    assert!(content.metadata.contains_key("lux3d.resolved_config"));
+
+    // DiT linear matrices only; every other tensor stays in the F16 fallback.
+    // 1075 rank-2 DiT `*.weight` matrices minus `ss_flow.input_layer.weight`
+    // (row length 8 does not divide into the 32-wide Q8_0 block).
+    let quantized = content
+        .tensor_infos
+        .values()
+        .filter(|info| info.ggml_dtype == candle_core::quantized::GgmlDType::Q8_0)
+        .count();
+    assert_eq!(
+        quantized, 1074,
+        "expected the 1074 Q8_0 DiT linear matrices"
+    );
+    assert!(content.tensor_infos.values().all(|info| info.ggml_dtype
+        == candle_core::quantized::GgmlDType::Q8_0
+        || info.ggml_dtype == candle_core::quantized::GgmlDType::F16));
+
+    // The runtime load path: quantized DiT linear via `get_quantized`, dense
+    // fallback tensor via the regular F32 VarBuilder.
+    let vb = unsafe {
+        weights
+            .var_builder(candle_core::DType::F32, &candle_core::Device::Cpu)
+            .expect("gguf var builder")
+    };
+    let qkv = vb
+        .pp("ss_flow.blocks.0.self_attn")
+        .get_quantized("to_qkv.weight")
+        .expect("quantized DiT linear lookup")
+        .expect("DiT linear must be Q8_0-packed");
+    assert_eq!(qkv.dtype(), candle_core::quantized::GgmlDType::Q8_0);
+    assert_eq!(qkv.shape().dims(), &[4608, 1536]);
+    let cls = vb
+        .pp("image_cond.embeddings")
+        .get((1, 1, 1024), "cls_token")
+        .expect("dense fallback tensor");
+    assert_eq!(cls.dtype(), candle_core::DType::F32);
+    assert_eq!(cls.dims(), &[1, 1, 1024]);
 }

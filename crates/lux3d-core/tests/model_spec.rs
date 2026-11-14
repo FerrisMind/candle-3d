@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use lux3d_core::test_support::runtime_root;
 use lux3d_core::{
@@ -503,6 +506,204 @@ fn triposg_model_spec_is_source_truth_backed() {
 }
 
 #[test]
+fn trellis2_contract_path_follows_the_family_name() {
+    // Pure path computation; the full inspect of the contract document lives
+    // in `trellis2_model_spec_is_source_truth_backed`.
+    let path = ModelSpec::contract_path(Path::new("runtime"), ModelFamily::Trellis2);
+    let rendered = path.to_string_lossy().replace('\\', "/");
+    assert_eq!("runtime/3d/contracts/trellis2.json", rendered);
+}
+
+#[test]
+fn trellis2_model_spec_is_source_truth_backed() {
+    let spec =
+        ModelSpec::inspect(runtime_root(), ModelFamily::Trellis2).expect("trellis2 model spec");
+
+    match &spec.preprocess {
+        PreprocessSpec::Trellis2(preprocess) => {
+            assert_eq!("HWC", preprocess.input_layout);
+            assert!(preprocess.premultiply_alpha);
+            assert_eq!(vec![512, 1024], preprocess.target_sizes);
+            assert_eq!(512, preprocess.default_target_size);
+            assert_eq!([0.485, 0.456, 0.406], preprocess.normalization.mean);
+            assert_eq!([0.229, 0.224, 0.225], preprocess.normalization.std);
+            assert!(
+                preprocess.no_alpha_behavior.contains("opaque"),
+                "no-alpha behavior must document the opaque fallback: {}",
+                preprocess.no_alpha_behavior
+            );
+        }
+        other => panic!("expected trellis2 preprocess spec, got {other:?}"),
+    }
+
+    match &spec.neural {
+        NeuralSpec::Trellis2(neural) => {
+            assert!(neural.image_encoder.contains("DINOv3"));
+            assert_eq!(24, neural.image_encoder_layers);
+            assert_eq!(1024, neural.image_encoder_hidden);
+            assert_eq!(16, neural.image_encoder_patch_size);
+            assert_eq!(4, neural.image_encoder_registers);
+            assert_eq!(30, neural.flow_dit_layers);
+            assert_eq!(1536, neural.flow_dit_width);
+            assert_eq!(12, neural.flow_dit_heads);
+            assert_eq!(128, neural.flow_dit_head_dim);
+            assert_eq!(1024, neural.cross_attention_dim);
+            assert_eq!(8, neural.sparse_structure_latent_channels);
+            assert_eq!(32, neural.sparse_structure_resolution);
+            assert_eq!(32, neural.slat_latent_channels);
+            assert_eq!(
+                [1024, 512, 256, 128, 64].as_slice(),
+                neural.shape_vae_decoder_channels
+            );
+            assert_eq!(6, neural.texture_vae_decoder_output_channels);
+            assert_eq!("FlowEulerGuidanceIntervalSampler", neural.sampler);
+            assert_eq!(12, neural.default_steps);
+            assert_eq!(7.5, neural.default_guidance_scale);
+        }
+        other => panic!("expected trellis2 neural spec, got {other:?}"),
+    }
+
+    match &spec.geometry {
+        GeometrySpec::Trellis2(geometry) => {
+            assert_eq!("mesh", geometry.artifact_kind);
+            assert_eq!("flexible_dual_grid", geometry.surface_extractor);
+            assert_eq!(7, geometry.voxel_output_channels);
+            assert!(!geometry.supports_fill_holes);
+            assert!(geometry.quad_split_rule.contains("w0*w2 > w1*w3"));
+        }
+        other => panic!("expected trellis2 geometry spec, got {other:?}"),
+    }
+
+    match &spec.export {
+        ExportSpec::Trellis2(export) => {
+            assert_eq!("glb", export.primary_extension);
+            assert_eq!(
+                export.alternate_extensions,
+                vec!["obj".to_string(), "ply".to_string()]
+            );
+            assert!(
+                export
+                    .utility_notes
+                    .iter()
+                    .any(|note| note.contains("pbrvox.bin")),
+                "export notes must document the PBR sidecar"
+            );
+        }
+        other => panic!("expected trellis2 export spec, got {other:?}"),
+    }
+
+    let RuntimeGeometry::Trellis2(runtime) = &spec.runtime_geometry else {
+        panic!("expected trellis2 runtime geometry");
+    };
+    assert_eq!("mesh", runtime.artifact_kind);
+    assert_eq!(2, runtime.outputs.len());
+
+    assert_eq!(
+        FutureWeightLoader::CandleMmapSafetensors,
+        spec.weight_plan.future_loader
+    );
+    assert_eq!(19, spec.weight_plan.raw_files.len());
+    assert_path_free_weight_plan(
+        &spec,
+        ModelFamily::Trellis2,
+        &[
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.json",
+            "ckpts/ss_flow_img_dit_1_3B_64_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_img2shape_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_512_bf16.safetensors",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.json",
+            "ckpts/slat_flow_imgshape2tex_dit_1_3B_1024_bf16.safetensors",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.json",
+            "ckpts/shape_dec_next_dc_f16c32_fp16.safetensors",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.json",
+            "ckpts/tex_dec_next_dc_f16c32_fp16.safetensors",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.json",
+            "external/ss_dec/ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+            "external/dinov3/config.json",
+            "external/dinov3/model.safetensors",
+            "pipeline.json",
+        ],
+    );
+
+    for excluded in [
+        "trellis2_rmbg_background_removal",
+        "trellis2_mesh_postprocess",
+        "trellis2_texture_atlas_uv",
+        "trellis2_1536_cascade_and_single_1024",
+        "trellis2_multi_sample",
+    ] {
+        assert!(
+            spec.exclusions.iter().any(|entry| entry.item == excluded),
+            "missing contract exclusion `{excluded}`"
+        );
+    }
+    assert_eq!("MIT", spec.license_policy.repo_license);
+    assert!(spec.license_policy.weight_license.contains("TRELLIS.2-4B"));
+    for source_path in spec.used_source_paths().iter() {
+        assert!(
+            spec.license_policy.covers_source(source_path),
+            "missing license classification for {source_path}"
+        );
+    }
+}
+
+#[test]
+fn canonical_family_contract_list_is_unaffected_by_trellis2() {
+    // Adding the `trellis2` family must not disturb the five existing
+    // contract documents: their paths follow the family names and the family
+    // tags inside each present document are unchanged. Full `ModelSpec::inspect`
+    // (with vendor-file hashing) is covered by the per-family tests and the
+    // vggt contract, which exists in this checkout.
+    let runtime = runtime_root();
+    let mut checked = 0;
+    for family in [
+        ModelFamily::Pi3,
+        ModelFamily::Pi3x,
+        ModelFamily::TripoSr,
+        ModelFamily::TripoSg,
+        ModelFamily::Vggt,
+        ModelFamily::Trellis2,
+    ] {
+        let contract_path = ModelSpec::contract_path(&runtime, family);
+        let rendered = contract_path.to_string_lossy().replace('\\', "/");
+        assert!(
+            rendered.ends_with(&format!("3d/contracts/{}.json", family.as_str())),
+            "unexpected contract path for `{family}`: {rendered}"
+        );
+        if !contract_path.is_file() {
+            // pi3/pi3x/triposr/trellis2 JSONs may be absent from this
+            // checkout; that is a documentation gap owned by the contract
+            // document task, not a regression of the family enum.
+            eprintln!("note: contract file absent: {}", contract_path.display());
+            continue;
+        }
+        let body = fs::read_to_string(&contract_path).expect("read contract body");
+        let value: serde_json::Value = serde_json::from_str(&body).expect("parse contract body");
+        assert_eq!(
+            family.as_str(),
+            value["family"].as_str().expect("family tag"),
+            "contract document for `{family}` must keep its family tag"
+        );
+        assert_eq!(
+            family.as_str(),
+            value["weight_plan"]["family"]
+                .as_str()
+                .expect("weight plan family"),
+            "weight plan for `{family}` must keep its family tag"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 1,
+        "expected at least one existing contract document on disk to verify"
+    );
+}
+
+#[test]
 fn license_policy_covers_every_used_source_file() {
     for family in [
         ModelFamily::Pi3,
@@ -510,6 +711,7 @@ fn license_policy_covers_every_used_source_file() {
         ModelFamily::TripoSr,
         ModelFamily::TripoSg,
         ModelFamily::Vggt,
+        ModelFamily::Trellis2,
     ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
@@ -530,6 +732,7 @@ fn vendor_sources_have_fingerprints_and_license_entries() {
         ModelFamily::TripoSr,
         ModelFamily::TripoSg,
         ModelFamily::Vggt,
+        ModelFamily::Trellis2,
     ] {
         let spec = ModelSpec::inspect(runtime_root(), family).expect("source-backed model spec");
 
