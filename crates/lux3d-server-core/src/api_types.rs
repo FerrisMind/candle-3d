@@ -127,6 +127,20 @@ pub struct MeshGenerationOptions {
     pub flash_octree_depth: Option<u32>,
     #[serde(default)]
     pub query_chunk_size: Option<usize>,
+    // TRELLIS.2-only options. `steps` and `seed` are shared with TripoSG and
+    // feed every TRELLIS.2 Euler sampler.
+    /// TRELLIS.2 pipeline variant: `512`, `1024`, or `1024_cascade`
+    /// (reference default). The single-resolution `1024` path is not
+    /// implemented yet and fails at run time.
+    #[serde(default)]
+    pub pipeline_type: Option<String>,
+    /// TRELLIS.2 cascade token budget (default 49152).
+    #[serde(default)]
+    pub max_num_tokens: Option<usize>,
+    /// Run the TRELLIS.2 texture stages (texture SLAT + guided VAE + PBR
+    /// vertex colors, default true); `false` exports the geometry-only mesh.
+    #[serde(default)]
+    pub texture: Option<bool>,
 }
 
 fn default_mc_resolution() -> u32 {
@@ -152,6 +166,9 @@ impl Default for MeshGenerationOptions {
             use_flash_decoder: None,
             flash_octree_depth: None,
             query_chunk_size: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         }
     }
 }

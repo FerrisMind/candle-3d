@@ -88,6 +88,7 @@ pub async fn models(State(state): ExtractedLux3dState) -> Json<ModelListResponse
             model_entry(&state, "vggt", "point_cloud", "ply"),
             model_entry(&state, "triposr", "mesh", "glb"),
             model_entry(&state, "triposg", "mesh", "glb"),
+            model_entry(&state, "trellis2", "mesh", "glb"),
         ],
     })
 }
@@ -435,13 +436,13 @@ async fn create_point_cloud_generation_json(
     spawn_point_cloud_generation(state, record, source, conditions, request.options).await
 }
 
-/// Download name for mesh jobs: TripoSG exports `triposg.<ext>`, while the
-/// historical triposr default keeps its `mesh.<ext>` stem for old clients.
+/// Download name for mesh jobs: TripoSG/TRELLIS.2 export `<family>.<ext>`,
+/// while the historical triposr default keeps its `mesh.<ext>` stem for old
+/// clients.
 fn mesh_download_filename(model: &str, format: MeshFormat) -> String {
-    let stem = if model == "triposg" {
-        "triposg"
-    } else {
-        "mesh"
+    let stem = match model {
+        "triposg" | "trellis2" => model,
+        _ => "mesh",
     };
     format!("{stem}.{}", format.extension())
 }
@@ -575,6 +576,10 @@ mod tests {
         assert_eq!(
             mesh_download_filename("triposg", MeshFormat::Glb),
             "triposg.glb"
+        );
+        assert_eq!(
+            mesh_download_filename("trellis2", MeshFormat::Glb),
+            "trellis2.glb"
         );
         assert_eq!(
             mesh_download_filename("triposr", MeshFormat::Glb),

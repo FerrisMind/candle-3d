@@ -10,7 +10,8 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use lux3d_core::export::{MeshFormat, PointCloudFormat};
-use lux3d_core::runtime::{Pi3xInjectConditions, TripoSgRunOptions};
+use lux3d_core::runtime::{Pi3xInjectConditions, Trellis2RunOptions, TripoSgRunOptions};
+use lux3d_core::{Trellis2PipelineType, export::pbrvox};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -475,13 +476,44 @@ fn triposg_options_from_mesh_options(options: &MeshGenerationOptions) -> Result<
     Ok(run_options)
 }
 
+/// Build the TRELLIS.2 run options from the reference defaults plus explicit
+/// mesh-request overrides. Pure helper so the mapping and validation can be
+/// unit-tested without a server state.
+fn trellis2_options_from_mesh_options(
+    options: &MeshGenerationOptions,
+) -> Result<Trellis2RunOptions> {
+    let defaults = Trellis2RunOptions::default();
+    let pipeline_type = match options.pipeline_type.as_deref() {
+        None => defaults.pipeline_type,
+        Some("512") => Trellis2PipelineType::R512,
+        // Accepted as a known reference value; the runtime rejects the
+        // not-yet-implemented single-resolution path with a clear job error.
+        Some("1024") => Trellis2PipelineType::R1024,
+        Some("1024_cascade") => Trellis2PipelineType::Cascade1024,
+        Some(other) => bail!(
+            "unknown trellis2 `pipeline_type` `{other}`; expected `512`, `1024` or `1024_cascade`"
+        ),
+    };
+    let steps = options.steps.unwrap_or(defaults.ss_steps);
+    Ok(Trellis2RunOptions {
+        seed: options.seed.unwrap_or(defaults.seed),
+        pipeline_type,
+        ss_steps: steps,
+        shape_steps: options.steps.unwrap_or(defaults.shape_steps),
+        tex_steps: options.steps.unwrap_or(defaults.tex_steps),
+        with_texture: options.texture.unwrap_or(defaults.with_texture),
+        max_num_tokens: options.max_num_tokens.unwrap_or(defaults.max_num_tokens),
+        preprocess: defaults.preprocess,
+    })
+}
+
 /// Pure mesh-request guard shared by [`spawn_mesh_generation`]: the model
 /// allow-list plus per-model option validation, unit-tested without a server
 /// state.
 fn validate_mesh_generation_request(model: &str, options: &MeshGenerationOptions) -> Result<()> {
     ensure!(
-        matches!(model, "triposr" | "triposg"),
-        "unsupported mesh model `{model}`; expected `triposr` or `triposg`"
+        matches!(model, "triposr" | "triposg" | "trellis2"),
+        "unsupported mesh model `{model}`; expected `triposr`, `triposg` or `trellis2`"
     );
     if model == "triposr" {
         ensure!(
@@ -501,10 +533,41 @@ fn validate_mesh_generation_request(model: &str, options: &MeshGenerationOptions
             ("use_flash_decoder", options.use_flash_decoder.is_some()),
             ("flash_octree_depth", options.flash_octree_depth.is_some()),
             ("query_chunk_size", options.query_chunk_size.is_some()),
+            ("pipeline_type", options.pipeline_type.is_some()),
+            ("max_num_tokens", options.max_num_tokens.is_some()),
+            ("texture", options.texture.is_some()),
         ] {
             ensure!(!present, "`{name}` is not supported for `triposr`");
         }
         return Ok(());
+    }
+    if model == "trellis2" {
+        // TRELLIS.2 owns the voxel grid (512 or 1024_cascade pipeline types),
+        // so the TripoSR marching-cubes knobs and the TripoSG octree/flash
+        // knobs must stay at their defaults here.
+        ensure!(
+            options.mc_resolution == 256,
+            "`mc_resolution` is not supported for `trellis2`; only the default 256 is supported"
+        );
+        ensure!(
+            options.mc_threshold == 25.0,
+            "`mc_threshold` is not supported for `trellis2`; only the default 25.0 is supported"
+        );
+        for (name, present) in [
+            ("guidance_scale", options.guidance_scale.is_some()),
+            ("num_tokens", options.num_tokens.is_some()),
+            ("dense_octree_depth", options.dense_octree_depth.is_some()),
+            (
+                "hierarchical_octree_depth",
+                options.hierarchical_octree_depth.is_some(),
+            ),
+            ("use_flash_decoder", options.use_flash_decoder.is_some()),
+            ("flash_octree_depth", options.flash_octree_depth.is_some()),
+            ("query_chunk_size", options.query_chunk_size.is_some()),
+        ] {
+            ensure!(!present, "`{name}` is not supported for `trellis2`");
+        }
+        return trellis2_options_from_mesh_options(options).map(|_| ());
     }
     // TripoSG owns the marching-cubes grid through its own octree-depth
     // options, so the TripoSR knobs must stay at their defaults here.
@@ -516,6 +579,13 @@ fn validate_mesh_generation_request(model: &str, options: &MeshGenerationOptions
         options.mc_threshold == 25.0,
         "`mc_threshold` is not supported for `triposg`; only the default 25.0 is supported"
     );
+    for (name, present) in [
+        ("pipeline_type", options.pipeline_type.is_some()),
+        ("max_num_tokens", options.max_num_tokens.is_some()),
+        ("texture", options.texture.is_some()),
+    ] {
+        ensure!(!present, "`{name}` is not supported for `triposg`");
+    }
     triposg_options_from_mesh_options(options).map(|_| ())
 }
 
@@ -533,6 +603,11 @@ pub async fn spawn_mesh_generation(
     };
     let triposg_run_options = if model == "triposg" {
         Some(triposg_options_from_mesh_options(&options)?)
+    } else {
+        None
+    };
+    let trellis2_run_options = if model == "trellis2" {
+        Some(trellis2_options_from_mesh_options(&options)?)
     } else {
         None
     };
@@ -627,6 +702,33 @@ pub async fn spawn_mesh_generation(
                                 Ok(())
                             })?
                         }
+                        "trellis2" => {
+                            let run_options = trellis2_run_options
+                                .expect("trellis2 options validated before the job was queued");
+                            runtime.models.with_trellis2(|pipeline| {
+                                let stages = pipeline
+                                    .run_from_path_with_stages(&source, &device, &run_options)
+                                    .map_err(anyhow::Error::from)?;
+                                let mesh =
+                                    stages.mesh.expect("trellis2 run always produces a mesh");
+                                if run_options.with_texture
+                                    && mesh.voxel_attr_channels == pbrvox::CHANNELS
+                                {
+                                    // The mesh plus the <stem>.pbrvox.bin /
+                                    // <stem>.pbr.json sidecar pair; the sidecars
+                                    // stay in the job workspace (only the mesh is
+                                    // served through /content).
+                                    pipeline
+                                        .export_mesh_with_pbr(&mesh, &output_path)
+                                        .map_err(anyhow::Error::from)?;
+                                } else {
+                                    pipeline
+                                        .export_mesh(&mesh, &output_path)
+                                        .map_err(anyhow::Error::from)?;
+                                }
+                                Ok(())
+                            })?
+                        }
                         other => bail!("unsupported mesh model `{other}`"),
                     }
                     Ok(output_path)
@@ -706,7 +808,8 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        MeshGenerationOptions, TripoSgRunOptions, triposg_options_from_mesh_options,
+        MeshGenerationOptions, Trellis2PipelineType, Trellis2RunOptions, TripoSgRunOptions,
+        trellis2_options_from_mesh_options, triposg_options_from_mesh_options,
         validate_mesh_generation_request,
     };
 
@@ -835,13 +938,188 @@ mod tests {
         for model in ["pi3", "pi3x", "pi3x_vo", "vggt", "", "triposrg"] {
             let error = validate_mesh_generation_request(model, &default_mesh_options())
                 .expect_err("unsupported mesh model must be rejected");
-            let expected =
-                format!("unsupported mesh model `{model}`; expected `triposr` or `triposg`");
+            let expected = format!(
+                "unsupported mesh model `{model}`; expected `triposr`, `triposg` or `trellis2`"
+            );
             assert!(
                 error.to_string().contains(&expected),
                 "unexpected message for `{model}`: `{}`",
                 error
             );
+        }
+    }
+
+    #[test]
+    fn trellis2_accepts_default_mesh_request() {
+        validate_mesh_generation_request("trellis2", &default_mesh_options())
+            .expect("default trellis2 request");
+    }
+
+    #[test]
+    fn trellis2_options_default_to_reference_values() {
+        let run = trellis2_options_from_mesh_options(&default_mesh_options())
+            .expect("default trellis2 options");
+        assert_eq!(Trellis2RunOptions::default(), run);
+        assert_eq!(
+            (42u64, "1024_cascade", 12usize, true, 49152usize),
+            (
+                run.seed,
+                run.pipeline_type.as_str(),
+                run.ss_steps,
+                run.with_texture,
+                run.max_num_tokens
+            )
+        );
+    }
+
+    #[test]
+    fn trellis2_options_map_every_override() {
+        let options = MeshGenerationOptions {
+            steps: Some(4),
+            seed: Some(7),
+            pipeline_type: Some("512".to_string()),
+            max_num_tokens: Some(8192),
+            texture: Some(false),
+            ..default_mesh_options()
+        };
+        let run =
+            trellis2_options_from_mesh_options(&options).expect("overridden trellis2 options");
+        assert_eq!(7, run.seed);
+        assert_eq!(Trellis2PipelineType::R512, run.pipeline_type);
+        assert_eq!(4, run.ss_steps);
+        assert_eq!(4, run.shape_steps);
+        assert_eq!(4, run.tex_steps);
+        assert!(!run.with_texture);
+        assert_eq!(8192, run.max_num_tokens);
+
+        let cascade = trellis2_options_from_mesh_options(&MeshGenerationOptions {
+            pipeline_type: Some("1024_cascade".to_string()),
+            ..default_mesh_options()
+        })
+        .expect("cascade options");
+        assert_eq!(Trellis2PipelineType::Cascade1024, cascade.pipeline_type);
+
+        let single_1024 = trellis2_options_from_mesh_options(&MeshGenerationOptions {
+            pipeline_type: Some("1024".to_string()),
+            ..default_mesh_options()
+        })
+        .expect("single-resolution options parse (runtime rejects it at run time)");
+        assert_eq!(Trellis2PipelineType::R1024, single_1024.pipeline_type);
+    }
+
+    #[test]
+    fn trellis2_rejects_unknown_pipeline_type() {
+        let options = MeshGenerationOptions {
+            pipeline_type: Some("1536_cascade".to_string()),
+            ..default_mesh_options()
+        };
+        let error = trellis2_options_from_mesh_options(&options)
+            .expect_err("unknown pipeline_type must be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("unknown trellis2 `pipeline_type` `1536_cascade`"),
+            "unexpected message: `{message}`"
+        );
+    }
+
+    #[test]
+    fn trellis2_rejects_foreign_mesh_options() {
+        let cases: [(&str, MeshGenerationOptions); 7] = [
+            (
+                "mc_resolution",
+                MeshGenerationOptions {
+                    mc_resolution: 128,
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "mc_threshold",
+                MeshGenerationOptions {
+                    mc_threshold: 10.0,
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "guidance_scale",
+                MeshGenerationOptions {
+                    guidance_scale: Some(3.5),
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "num_tokens",
+                MeshGenerationOptions {
+                    num_tokens: Some(1024),
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "use_flash_decoder",
+                MeshGenerationOptions {
+                    use_flash_decoder: Some(true),
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "flash_octree_depth",
+                MeshGenerationOptions {
+                    flash_octree_depth: Some(9),
+                    ..default_mesh_options()
+                },
+            ),
+            (
+                "query_chunk_size",
+                MeshGenerationOptions {
+                    query_chunk_size: Some(4096),
+                    ..default_mesh_options()
+                },
+            ),
+        ];
+        for (name, options) in cases {
+            let error = validate_mesh_generation_request("trellis2", &options)
+                .expect_err("foreign option must be rejected for trellis2");
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!("`{name}` is not supported for `trellis2`")),
+                "unexpected message for {name}: `{message}`"
+            );
+        }
+    }
+
+    #[test]
+    fn triposg_and_triposr_reject_trellis2_only_options() {
+        for model in ["triposg", "triposr"] {
+            for (name, options) in [
+                (
+                    "pipeline_type",
+                    MeshGenerationOptions {
+                        pipeline_type: Some("512".to_string()),
+                        ..default_mesh_options()
+                    },
+                ),
+                (
+                    "max_num_tokens",
+                    MeshGenerationOptions {
+                        max_num_tokens: Some(8192),
+                        ..default_mesh_options()
+                    },
+                ),
+                (
+                    "texture",
+                    MeshGenerationOptions {
+                        texture: Some(false),
+                        ..default_mesh_options()
+                    },
+                ),
+            ] {
+                let error = validate_mesh_generation_request(model, &options)
+                    .expect_err("trellis2-only option must be rejected");
+                let message = error.to_string();
+                assert!(
+                    message.contains(&format!("`{name}` is not supported for `{model}`")),
+                    "unexpected message for {model}/{name}: `{message}`"
+                );
+            }
         }
     }
 }

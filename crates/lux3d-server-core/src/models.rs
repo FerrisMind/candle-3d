@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use lux3d_core::runtime::{
-    Pi3Pipeline, Pi3xPipeline, Pi3xVoPipeline, TripoSgPipeline, TripoSrPipeline, VggtPipeline,
+    Pi3Pipeline, Pi3xPipeline, Pi3xVoPipeline, Trellis2Pipeline, TripoSgPipeline, TripoSrPipeline,
+    VggtPipeline,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -31,6 +32,7 @@ enum CachedPipeline {
     Pi3xVo(Pi3xVoPipeline),
     TripoSr(TripoSrPipeline),
     TripoSg(TripoSgPipeline),
+    Trellis2(Trellis2Pipeline),
     Vggt(VggtPipeline),
 }
 
@@ -107,6 +109,12 @@ impl ModelRegistry {
             "triposg" => CachedPipeline::TripoSg(
                 TripoSgPipeline::load_with_rmbg(assets, state.rmbg_model_path.clone())
                     .context("failed to load triposg pipeline")?,
+            ),
+            // TRELLIS.2 loads from the canonical package only (the raw
+            // `models/TRELLIS.2-4B` checkpoint layout is a CLI-only loader).
+            // Stage weights are mmap-backed and touched lazily per stage.
+            "trellis2" => CachedPipeline::Trellis2(
+                Trellis2Pipeline::load(assets).context("failed to load trellis2 pipeline")?,
             ),
             "vggt" => CachedPipeline::Vggt(
                 VggtPipeline::load(assets).context("failed to load vggt pipeline")?,
@@ -187,13 +195,54 @@ impl ModelRegistry {
             _ => bail!("vggt pipeline is not loaded"),
         }
     }
+
+    pub fn with_trellis2<R>(&self, f: impl FnOnce(&Trellis2Pipeline) -> Result<R>) -> Result<R> {
+        let models = self
+            .inner
+            .read()
+            .map_err(|_| anyhow::anyhow!("model registry lock poisoned"))?;
+        match models.get("trellis2") {
+            Some(CachedPipeline::Trellis2(pipeline)) => f(pipeline),
+            _ => bail!("trellis2 pipeline is not loaded"),
+        }
+    }
 }
 
 fn is_supported_model(model_id: &str) -> bool {
     matches!(
         model_id,
-        "pi3" | "pi3x" | "pi3x_vo" | "triposr" | "triposg" | "vggt"
+        "pi3" | "pi3x" | "pi3x_vo" | "triposr" | "triposg" | "trellis2" | "vggt"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ModelLoadStatus, ModelRegistry};
+
+    #[test]
+    fn trellis2_is_a_supported_model_id() {
+        let registry = ModelRegistry::default();
+        assert_eq!(
+            ModelLoadStatus::Unloaded,
+            registry.status("trellis2"),
+            "`trellis2` must be a known (unloadable) model id without weights on disk"
+        );
+        assert_eq!(
+            ModelLoadStatus::NotFound,
+            registry.status("trellis-2"),
+            "unknown model ids must stay NotFound"
+        );
+        assert_eq!(
+            ModelLoadStatus::Unloaded,
+            registry
+                .unload("trellis2")
+                .expect("unload of a supported id succeeds")
+        );
+        assert_eq!(
+            ModelLoadStatus::NotFound,
+            registry.unload("trellis-2").expect("unload unknown id")
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
