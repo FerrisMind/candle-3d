@@ -207,8 +207,8 @@ fn run_model_rejects_trellis2_foreign_flag_at_dispatch_before_weights() {
         "cpu".to_string(),
         "--source".to_string(),
         "does-not-exist.png".to_string(),
-        "--rmbg-model-path".to_string(),
-        "does-not-exist-rmbg".to_string(),
+        "--mc-resolution".to_string(),
+        "256".to_string(),
         "--output".to_string(),
         "out.glb".to_string(),
     ]);
@@ -217,10 +217,10 @@ fn run_model_rejects_trellis2_foreign_flag_at_dispatch_before_weights() {
         panic!("expected run command");
     };
 
-    let error = run_model(args).expect_err("`--rmbg-model-path` must be rejected for trellis2");
+    let error = run_model(args).expect_err("`--mc-resolution` must be rejected for trellis2");
     let message = error.to_string();
     assert!(
-        message.contains("`--rmbg-model-path` is not supported for `trellis2`"),
+        message.contains("`--mc-resolution` is not supported for `trellis2`"),
         "unexpected rejection message: {message}"
     );
 }

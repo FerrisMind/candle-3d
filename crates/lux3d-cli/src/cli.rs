@@ -60,7 +60,7 @@ pub struct QuantizeArgs {
     #[arg(
         long,
         conflicts_with = "family",
-        help = "Auxiliary package family label, e.g. `rmbg`; makes FAMILY optional."
+        help = "Auxiliary package family label, e.g. `rmbg` or `rmbg2`; makes FAMILY optional."
     )]
     pub aux_family: Option<String>,
 
@@ -650,7 +650,15 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
         ModelFamily::Trellis2 => {
             reject_unsupported_trellis2_options(&args)?;
             let options = trellis2_run_options_from_args(&args)?;
-            run_trellis2(model_assets, &args.source, options, &args.output, &device)?
+            let rmbg_model_path = resolve_trellis2_rmbg_model_path(&args);
+            run_trellis2(
+                model_assets,
+                rmbg_model_path,
+                &args.source,
+                options,
+                &args.output,
+                &device,
+            )?
         }
     }
 
@@ -868,14 +876,31 @@ fn resolve_rmbg_model_path(args: &RunArgs) -> Option<PathBuf> {
         .filter(|candidate| candidate.is_dir())
 }
 
+/// Resolve the RMBG-2.0/BiRefNet package used by TRELLIS.2 for RGB inputs:
+/// explicit `--rmbg-model-path` wins, otherwise a sibling `rmbg-2.0`
+/// canonical directory (or raw `RMBG-2.0` checkpoint directory) next to an
+/// explicit `--model-path` is used when present. The package is distributed
+/// separately because its CC-BY-NC license differs from TRELLIS.2's MIT
+/// license.
+fn resolve_trellis2_rmbg_model_path(args: &RunArgs) -> Option<PathBuf> {
+    if args.rmbg_model_path.is_some() {
+        return args.rmbg_model_path.clone();
+    }
+    let parent = args.model_path.as_ref().and_then(|path| path.parent())?;
+    ["rmbg-2.0", "RMBG-2.0"]
+        .iter()
+        .map(|name| parent.join(name))
+        .find(|candidate| candidate.is_dir())
+}
+
 /// TRELLIS.2 exposes image-to-mesh diffusion + texture only. Reject the
 /// Pi3/Pi3X/VGGT conditioning and point-cloud options, the TripoSR
-/// marching-cubes knobs, the TripoSG octree/flash/latent knobs it does not
-/// share, and the RMBG package (a documented TRELLIS.2 slice exclusion:
-/// RGB input is treated as fully opaque) instead of silently ignoring them.
-/// `--steps`/`--seed`/`--pipeline-type`/`--max-num-tokens`/`--texture` stay
-/// allowed; `--guidance-scale` has no runtime override (sampler guidance comes
-/// from `pipeline.json`/defaults).
+/// marching-cubes knobs, and the TripoSG octree/flash/latent knobs it does
+/// not share instead of silently ignoring them. `--rmbg-model-path` is
+/// accepted: the reference runs RMBG-2.0/BiRefNet for inputs without a
+/// usable alpha channel. `--steps`/`--seed`/`--pipeline-type`/
+/// `--max-num-tokens`/`--texture` stay allowed; `--guidance-scale` has no
+/// runtime override (sampler guidance comes from `pipeline.json`/defaults).
 fn reject_unsupported_trellis2_options(args: &RunArgs) -> anyhow::Result<()> {
     if args.interval.is_some() {
         anyhow::bail!("`--interval` is not supported for `trellis2`");
@@ -921,12 +946,6 @@ fn reject_unsupported_trellis2_options(args: &RunArgs) -> anyhow::Result<()> {
     }
     if args.flash_octree_depth.is_some() {
         anyhow::bail!("`--flash-octree-depth` is not supported for `trellis2`");
-    }
-    if args.rmbg_model_path.is_some() {
-        anyhow::bail!(
-            "`--rmbg-model-path` is not supported for `trellis2`; RMBG background removal is a \
-             documented exclusion and RGB input is treated as fully opaque"
-        );
     }
     Ok(())
 }
@@ -1154,23 +1173,28 @@ fn run_triposg(
 /// directory (`pipeline.json` + `ckpts/`, i.e. the upstream
 /// `models/TRELLIS.2-4B` layout) uses the per-stage raw loader; anything else
 /// (canonical package dir, GGUF, or HF cache auto-download) goes through the
-/// canonical weights path.
+/// canonical weights path. `rmbg_model_path` is the separate RMBG-2.0
+/// canonical package/GGUF used for RGB inputs.
 fn load_trellis2_pipeline(
     model_assets: &ModelAssetOptions,
+    rmbg_model_path: Option<&Path>,
     device: &candle_core::Device,
 ) -> anyhow::Result<Trellis2Pipeline> {
     if let Some(dir) = &model_assets.canonical_dir {
         let looks_raw =
             dir.is_dir() && (dir.join("pipeline.json").is_file() || dir.join("ckpts").is_dir());
         if looks_raw {
-            return Trellis2Pipeline::load_from_raw_dir(dir, device).map_err(anyhow::Error::from);
+            return Trellis2Pipeline::load_from_raw_dir_with_rmbg(dir, device, rmbg_model_path)
+                .map_err(anyhow::Error::from);
         }
     }
-    Trellis2Pipeline::load(model_assets.clone()).map_err(anyhow::Error::from)
+    Trellis2Pipeline::load_with_rmbg(model_assets.clone(), rmbg_model_path, device)
+        .map_err(anyhow::Error::from)
 }
 
 fn run_trellis2(
     model_assets: ModelAssetOptions,
+    rmbg_model_path: Option<PathBuf>,
     source: &Path,
     options: Trellis2RunOptions,
     output: &Path,
@@ -1178,7 +1202,7 @@ fn run_trellis2(
 ) -> anyhow::Result<()> {
     let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
     let t0 = std::time::Instant::now();
-    let pipeline = load_trellis2_pipeline(&model_assets, device)?;
+    let pipeline = load_trellis2_pipeline(&model_assets, rmbg_model_path.as_deref(), device)?;
     if stage_time {
         eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
     }
@@ -1577,7 +1601,7 @@ mod tests {
 
     #[test]
     fn run_trellis2_rejects_foreign_family_options() {
-        let flag_options: [(&str, &[&str]); 15] = [
+        let flag_options: [(&str, &[&str]); 14] = [
             ("--interval", &["--interval", "2"]),
             ("--conditions", &["--conditions", "conditions.npz"]),
             ("--vo", &["--vo"]),
@@ -1595,7 +1619,6 @@ mod tests {
                 &["--hierarchical-octree-depth", "9"],
             ),
             ("--flash-decoder", &["--flash-decoder", "false"]),
-            ("--rmbg-model-path", &["--rmbg-model-path", "rmbg-1.4"]),
         ];
         for (flag, extra) in flag_options {
             let mut argv = vec![
@@ -1621,6 +1644,58 @@ mod tests {
             );
             assert!(message.contains(flag), "`{flag}` missing in `{message}`");
         }
+    }
+
+    #[test]
+    fn run_trellis2_accepts_rmbg_model_path_and_finds_rmbg2_sibling() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "trellis2",
+            "--source",
+            "image.png",
+            "--rmbg-model-path",
+            "models/RMBG-2.0",
+            "--output",
+            "out.glb",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        super::reject_unsupported_trellis2_options(&args).expect("rmbg accepted");
+        assert_eq!(
+            Some(std::path::PathBuf::from("models/RMBG-2.0")),
+            super::resolve_trellis2_rmbg_model_path(&args)
+        );
+
+        let root = std::env::temp_dir().join(format!(
+            "lux3d-trellis2-rmbg-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let model_dir = root.join("TRELLIS.2-4B");
+        let rmbg_dir = root.join("rmbg-2.0");
+        std::fs::create_dir_all(&model_dir).expect("model dir");
+        std::fs::create_dir_all(&rmbg_dir).expect("rmbg dir");
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "trellis2",
+            "--source",
+            "image.png",
+            "--model-path",
+            model_dir.to_str().expect("utf8 model path"),
+            "--output",
+            "out.glb",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(
+            Some(rmbg_dir.clone()),
+            super::resolve_trellis2_rmbg_model_path(&args)
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
