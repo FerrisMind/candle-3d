@@ -54,8 +54,9 @@ Supported model families:
   shape/texture SLAT flow transformers, FlexiDualGrid VAE, O-Voxel dual-grid mesh with PBR
   vertex attributes). Reference-default `1024_cascade` pipeline at 12 steps per stage,
   guidance 7.5, seed 42. Code and model card are MIT; the bundled DINOv3 encoder is a
-  separately licensed gated Meta model; RMBG-2.0/BiRefNet is excluded — inputs must
-  carry alpha.
+  separately licensed gated Meta model. RGB inputs run the reference RMBG-2.0/BiRefNet
+  background remover, shipped as the separate `rmbg-2.0` package under CC-BY-NC-4.0;
+  inputs with a usable alpha channel skip background removal.
 
 ## Key Features
 
@@ -110,6 +111,10 @@ cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-mod
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposg-dir> --output-dir <canonical-triposg-dir> triposg
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-trellis2-dir> --output-dir <canonical-trellis2-dir> trellis2
+
+# Auxiliary RMBG-2.0 package (CC-BY-NC): use the packer directly.
+python -I tools/python_baseline/normalize_weights.py --family rmbg2 `
+  --raw-model-dir <raw-RMBG-2.0-dir> --output-dir <canonical-rmbg2-dir>
 ```
 
 TRELLIS.2 normalization packs the flat `microsoft/TRELLIS.2-4B` layout (seven
@@ -177,10 +182,23 @@ cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
   --source <canonical-rmbg-dir>/model.safetensors `
   --output <gguf-rmbg-dir>/model.gguf --dtype f16 --fallback-dtype f16
 
+# RMBG-2.0/BiRefNet for TRELLIS.2 is a separate auxiliary package too.
+# F16 is the reference-fidelity default (alpha max |diff| = 1 on the validation
+# image); Q8_0 shrinks 0.82 GiB to 0.24 GiB with alpha max |diff| = 7.
+cargo run -p lux3d-cli -- weights quantize --aux-family rmbg2 `
+  --source <canonical-rmbg2-dir>/model.safetensors `
+  --output <gguf-rmbg2-f16-dir>/model.gguf --dtype f16 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize --aux-family rmbg2 `
+  --source <canonical-rmbg2-dir>/model.safetensors `
+  --output <gguf-rmbg2-q8_0-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
 # Run with only the GGUF directories; no safetensors/manifest/checksums needed.
 cargo run -p lux3d-cli -- run triposg --device cuda `
   --model-path <gguf-triposg-dir> --rmbg-model-path <gguf-rmbg-dir> `
   --source <image> --output out.obj
+cargo run -p lux3d-cli -- run trellis2 --device cuda `
+  --model-path <gguf-trellis2-dir> --rmbg-model-path <gguf-rmbg2-f16-dir> `
+  --source <image> --output out.glb
 
 # Optional: `--all-2d` also quantizes non-`*.weight` rank-2 tensors;
 # `--prefix transformer.` (repeatable) restricts quantization for bisection.
@@ -471,14 +489,16 @@ cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-tr
 cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.glb>
 
 # TRELLIS.2 -> textured GLB + PBR sidecar from a canonical package
-# (defaults: 1024_cascade pipeline, 12 steps per sampler, guidance 7.5, seed 42, texture on)
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --output <output-file.glb>
+# (defaults: 1024_cascade pipeline, 12 steps per sampler, guidance 7.5, seed 42, texture on).
+# RGB inputs need the separate RMBG-2.0 package; a sibling `rmbg-2.0`/`RMBG-2.0`
+# directory next to --model-path is discovered automatically.
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --output <output-file.glb>
 # Geometry-only run (no texture SLAT / tex VAE / PBR sidecar):
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --texture false --output <output-file.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --texture false --output <output-file.glb>
 # Faster 512-preview pipeline with overrides:
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --pipeline-type 512 --steps 12 --seed 42 --output <preview.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --pipeline-type 512 --steps 12 --seed 42 --output <preview.glb>
 # The raw microsoft/TRELLIS.2-4B checkpoint directory (pipeline.json + ckpts/) is accepted as-is:
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <raw-TRELLIS.2-4B-dir> --source <input-image> --output <output-file.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <raw-TRELLIS.2-4B-dir> --rmbg-model-path <raw-RMBG-2.0-dir> --source <input-image> --output <output-file.glb>
 
 # Auto-download canonical packages from Hugging Face into the user cache
 cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --output <output-file.ply>
@@ -486,7 +506,7 @@ cargo run -p lux3d-cli --features cuda -- run pi3 --source <input-sequence> --ou
 
 **Output formats:** mesh commands (`triposr`, `triposg`, `trellis2`) select the writer from the output extension: `.glb` (primary/default), `.obj`, `.ply` (`.stl` is not available for `trellis2`). Point-cloud commands (`pi3`, `pi3x`, `vggt`) use `.ply` (primary) or `.xyz`. The HTTP mesh API defaults to GLB and accepts `options.output_format`; the point-cloud API defaults to PLY and accepts `options.output_format` (`ply`/`xyz`). A textured `trellis2` run additionally writes a `<stem>.pbrvox.bin` + `<stem>.pbr.json` sidecar pair next to the output: the sparse-voxel PBR vertex attributes (6 channels) live outside the GLB/OBJ/PLY mesh formats, so the sidecar preserves them losslessly.
 
-> **TRELLIS.2 notes:** `--pipeline-type` accepts `512`, `1024`, or `1024_cascade` (reference default). The single-resolution `1024` path and the 1536-token cascade are not implemented yet and fail at run time. Inputs must carry an alpha channel — the reference RMBG-2.0/BiRefNet background removal is a documented exclusion (fully-opaque RGB is treated as-is). Mesh post-processing (`fill_holes`, decimation) and texture-atlas UV unwrapping are excluded; the mesh is the O-Voxel dual-grid surface with per-vertex PBR colors in the sidecar. Weight stages load sequentially (~7.8 GiB measured peak on `1024_cascade` with the texture stages resident); CPU inference works but is slow. Auto-download from `oxide-lab/TRELLIS.2-4B` is reserved but not yet published, so pass an explicit `--model-path` (canonical package or raw checkpoint directory).
+> **TRELLIS.2 notes:** `--pipeline-type` accepts `512`, `1024`, or `1024_cascade` (reference default). The single-resolution `1024` path and the 1536-token cascade are not implemented yet and fail at run time. The reference preprocessing is reproduced exactly: LANCZOS max-side downscale, alpha path when RGBA carries non-opaque alpha, otherwise RMBG-2.0/BiRefNet produces the mask (missing RMBG weights is an error — never an opaque fallback), then the alpha>0.8 bbox, Pillow-rounded square crop, premultiply and resize. Mesh post-processing (`fill_holes`, decimation) and texture-atlas UV unwrapping are excluded; the mesh is the O-Voxel dual-grid surface with per-vertex PBR colors in the sidecar. Weight stages load sequentially (~7.8 GiB measured peak on `1024_cascade` with the texture stages resident); CPU inference works but is slow. Auto-download from `oxide-lab/TRELLIS.2-4B` is reserved but not yet published, so pass an explicit `--model-path` (canonical package or raw checkpoint directory).
 
 > **Experimental backends (Vulkan / WGPU):** select a non-CUDA device with `--device`:
 >
@@ -505,6 +525,12 @@ cargo run -p lux3d-server --features cuda -- --host 127.0.0.1 --port 8080
 curl http://127.0.0.1:8080/health
 curl http://127.0.0.1:8080/v1/models
 ```
+
+TRELLIS.2 RGB requests need the separate RMBG-2.0 package. Pass it with
+`--trellis2-rmbg-model-path <dir>` / `LUX3D_TRELLIS2_RMBG_MODEL_PATH`, or place
+`rmbg-2.0` (or raw `RMBG-2.0`) next to the explicit `--model-path`. TripoSG's
+`--rmbg-model-path` / `LUX3D_RMBG_MODEL_PATH` remains the separate RMBG-1.4
+package; the two families deliberately do not share weights.
 
 Prebuilt releases (`.github/workflows/release.yml`): Windows + Ubuntu × cpu/cuda/vulkan.
 Names follow llama.cpp (`lux3d-<tag>-bin-…`); CUDA libs ship inside the archive (mistral.rs style).
@@ -636,4 +662,4 @@ Upstream model assets and canonicalized model artifacts keep their original lice
 
 **TripoSG:** the upstream code and weights are MIT licensed. The raw checkpoint lives at `VAST-AI/TripoSG`; the canonical package used by `--model-path`/auto-download is published as `oxide-lab/TripoSG`. Upstream `load_image` uses BriaRMBG 1.4 when a valid alpha channel is missing; Lux3D implements that fallback fully. The RMBG weights do not join the MIT TripoSG package: they are normalized into the separate `rmbg-1.4` canonical package under the BRIA source-available/non-commercial license (commercial use requires a BRIA license), resolved via `--rmbg-model-path` or a sibling `rmbg-1.4` directory. Upstream's pipeline defaults to the flash decoder (`use_flash_decoder=True`, `flash_octree_depth=9`); Lux3D implements the same flash SDF schedule plus a clean-room Rust DiffDMC. Diso (CC BY-NC 4.0) source and tables are not copied, so ambiguous checkerboard cells may resolve differently; the non-flash dense/hierarchical path remains available via `--flash-decoder false`. The full VAE encode API (FPS sampling, `vae.quant`, mean/logvar/std distribution) is also implemented even though the image-to-3D pipeline only calls `vae.decode`.
 
-**TRELLIS.2:** the upstream code (`microsoft/TRELLIS.2`) and the `microsoft/TRELLIS.2-4B` model card are MIT licensed, and the reference is mirrored under `candle-3d-refs/TRELLIS.2`. Obtain the weights from the upstream repository and normalize them with `weights normalize ... trellis2` before running. The bundled DINOv3 ViT-L/16 encoder is a separately licensed gated Meta model — verify its terms independently; DINOv3 access may be required separately from TRELLIS.2. RMBG-2.0/BiRefNet is not part of this pipeline: the background-removal stage is excluded, so supply images with a valid alpha channel.
+**TRELLIS.2:** the upstream code (`microsoft/TRELLIS.2`) and the `microsoft/TRELLIS.2-4B` model card are MIT licensed, and the reference is mirrored under `candle-3d-refs/TRELLIS.2`. Obtain the weights from the upstream repository and normalize them with `weights normalize ... trellis2` before running. The bundled DINOv3 ViT-L/16 encoder is a separately licensed gated Meta model — verify its terms independently; DINOv3 access may be required separately from TRELLIS.2. The reference background remover, RMBG-2.0 (BiRefNet/Swin-L), is implemented and used for RGB inputs; its weights do not join the MIT TRELLIS.2 package. Normalize them under the `rmbg2` auxiliary family and pass `--rmbg-model-path` (or place `rmbg-2.0` next to `--model-path`). RMBG-2.0 is licensed CC-BY-NC-4.0 (non-commercial), with commercial use subject to BRIA's terms.

@@ -52,8 +52,9 @@ Lux3D / candle-3d — это Rust 2024 workspace, который предост�
 - `trellis2` — TRELLIS.2-4B: image-to-3D инференс (DINOv3 ViT-L/16 encoder, SS flow DiT,
   shape/texture SLAT flow-трансформеры, FlexiDualGrid VAE, O-Voxel dual-grid меш с PBR-атрибутами
   вершин). Референсный `1024_cascade` pipeline по умолчанию: 12 шагов на стадию, guidance 7.5,
-  seed 42. Код и model card — MIT; встроенный DINOv3 — отдельная gated-модель Meta;
-  стадия RMBG-2.0/BiRefNet исключена — вход должен нести alpha-канал).
+  seed 42. Код и model card — MIT; встроенный DINOv3 — отдельная gated-модель Meta.
+  RGB-вход проходит референсное удаление фона RMBG-2.0/BiRefNet — отдельный пакет
+  `rmbg-2.0` под лицензией CC-BY-NC-4.0; при валидном alpha-канале RMBG пропускается.
 
 ## Ключевые возможности
 
@@ -108,6 +109,10 @@ cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-mod
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-vggt-dir> --output-dir <canonical-vggt-dir> vggt
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-triposg-dir> --output-dir <canonical-triposg-dir> triposg
 cargo run -p lux3d-cli -- weights normalize --repo-root <runtime-root> --raw-model-dir <raw-trellis2-dir> --output-dir <canonical-trellis2-dir> trellis2
+
+# Вспомогательный пакет RMBG-2.0 (CC-BY-NC): напрямую через упаковщик.
+python -I tools/python_baseline/normalize_weights.py --family rmbg2 `
+  --raw-model-dir <raw-RMBG-2.0-dir> --output-dir <canonical-rmbg2-dir>
 ```
 
 Нормализация TRELLIS.2 упаковывает плоский layout `microsoft/TRELLIS.2-4B` (семь пар
@@ -173,10 +178,23 @@ cargo run -p lux3d-cli -- weights quantize --aux-family rmbg `
   --source <canonical-rmbg-dir>/model.safetensors `
   --output <gguf-rmbg-dir>/model.gguf --dtype f16 --fallback-dtype f16
 
+# RMBG-2.0/BiRefNet для TRELLIS.2 — тоже отдельный auxiliary-пакет.
+# F16 — референсный дефолт по точности (alpha max |diff| = 1 на валидационном
+# изображении); Q8_0 сжимает 0.82 GiB до 0.24 GiB при alpha max |diff| = 7.
+cargo run -p lux3d-cli -- weights quantize --aux-family rmbg2 `
+  --source <canonical-rmbg2-dir>/model.safetensors `
+  --output <gguf-rmbg2-f16-dir>/model.gguf --dtype f16 --fallback-dtype f16
+cargo run -p lux3d-cli -- weights quantize --aux-family rmbg2 `
+  --source <canonical-rmbg2-dir>/model.safetensors `
+  --output <gguf-rmbg2-q8_0-dir>/model.gguf --dtype q8_0 --fallback-dtype f16
+
 # Запуск только по GGUF-каталогам; safetensors/manifest/checksums не нужны.
 cargo run -p lux3d-cli -- run triposg --device cuda `
   --model-path <gguf-triposg-dir> --rmbg-model-path <gguf-rmbg-dir> `
   --source <image> --output out.obj
+cargo run -p lux3d-cli -- run trellis2 --device cuda `
+  --model-path <gguf-trellis2-dir> --rmbg-model-path <gguf-rmbg2-f16-dir> `
+  --source <image> --output out.glb
 
 # `--all-2d` квантует и rank-2 тензоры без суффикса `.weight`;
 # `--prefix transformer.` (можно повторять) ограничивает набор для отладки.
@@ -466,14 +484,16 @@ cargo run -p lux3d-cli --features cuda -- run triposg --model-path <canonical-tr
 cargo run -p lux3d-cli --features cuda -- run triposg --source <input-image> --output <output-file.glb>
 
 # TRELLIS.2 -> текстурированный GLB + PBR-sidecar из canonical package
-# (по умолчанию: pipeline 1024_cascade, 12 шагов на сэмплер, guidance 7.5, seed 42, текстура включена)
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --output <output-file.glb>
+# (по умолчанию: pipeline 1024_cascade, 12 шагов на сэмплер, guidance 7.5, seed 42, текстура включена).
+# RGB-входу нужен отдельный пакет RMBG-2.0; соседний каталог `rmbg-2.0`/`RMBG-2.0`
+# рядом с --model-path находится автоматически.
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --output <output-file.glb>
 # Прогон без текстур (без texture SLAT / tex VAE / PBR-sidecar):
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --texture false --output <output-file.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --texture false --output <output-file.glb>
 # Быстрый pipeline 512 с переопределениями:
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --source <input-image> --pipeline-type 512 --steps 12 --seed 42 --output <preview.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <canonical-trellis2-dir> --rmbg-model-path <canonical-rmbg2-dir> --source <input-image> --pipeline-type 512 --steps 12 --seed 42 --output <preview.glb>
 # Сырой каталог checkpoint'ов microsoft/TRELLIS.2-4B (pipeline.json + ckpts/) принимается как есть:
-cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <raw-TRELLIS.2-4B-dir> --source <input-image> --output <output-file.glb>
+cargo run -p lux3d-cli --features cuda -- run trellis2 --model-path <raw-TRELLIS.2-4B-dir> --rmbg-model-path <raw-RMBG-2.0-dir> --source <input-image> --output <output-file.glb>
 
 # Автоскачивание canonical packages из Hugging Face в пользовательский cache
 cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-file.ply>
@@ -481,7 +501,7 @@ cargo run -p lux3d-cli -- run pi3 --source <input-sequence> --output <output-fil
 
 **Форматы вывода:** mesh-команды (`triposr`, `triposg`, `trellis2`) выбирают writer по расширению: `.glb` (основной/по умолчанию), `.obj`, `.ply` (`.stl` для `trellis2` недоступен). Point-cloud команды (`pi3`, `pi3x`, `vggt`) — `.ply` (основной) или `.xyz`. HTTP mesh API по умолчанию отдаёт GLB, point-cloud API — PLY; формат задаётся `options.output_format` (`glb`/`obj`/`ply`/`stl` и `ply`/`xyz` соответственно). Текстурированный прогон `trellis2` дополнительно пишет пару sidecar-файлов `<stem>.pbrvox.bin` + `<stem>.pbr.json` рядом с выводом: PBR-атрибуты вершин (6 каналов) на разреженной воксельной сетке не помещаются в форматы GLB/OBJ/PLY, поэтому sidecar сохраняет их без потерь.
 
-> **Заметки по TRELLIS.2:** `--pipeline-type` принимает `512`, `1024` или `1024_cascade` (референсный дефолт). Путь с одиночным разрешением `1024` и каскад на 1536 токенов пока не реализованы и падают в рантайме. Вход должен нести alpha-канал — референсное удаление фона RMBG-2.0/BiRefNet является задокументированным исключением (полностью непрозрачный RGB обрабатывается как есть). Постобработка меша (`fill_holes`, decimation) и развёртка texture-atlas UV исключены; меш — это поверхность O-Voxel dual-grid с PBR-цветами вершин в sidecar. Стадии весов загружаются последовательно (~7.8 GiB измеренный пик на `1024_cascade` при резидентных текстурных стадиях); инференс на CPU работает, но медленный. Автоскачивание из `oxide-lab/TRELLIS.2-4B` зарезервировано, но репозиторий ещё не опубликован, поэтому передавайте явный `--model-path` (canonical-пакет или сырой каталог checkpoint'ов).
+> **Заметки по TRELLIS.2:** `--pipeline-type` принимает `512`, `1024` или `1024_cascade` (референсный дефолт). Путь с одиночным разрешением `1024` и каскад на 1536 токенов пока не реализованы и падают в рантайме. Референсный препроцессинг воспроизведён полностью: LANCZOS-уменьшение длинной стороны, alpha-путь при непустом alpha-канале RGBA, иначе RMBG-2.0/BiRefNet строит маску (отсутствие весов RMBG — ошибка, а не opaque-fallback), затем bbox по alpha>0.8, квадратный crop с Pillow-округлением, premultiply и resize. Постобработка меша (`fill_holes`, decimation) и развёртка texture-atlas UV исключены; меш — это поверхность O-Voxel dual-grid с PBR-цветами вершин в sidecar. Стадии весов загружаются последовательно (~7.8 GiB измеренный пик на `1024_cascade` при резидентных текстурных стадиях); инференс на CPU работает, но медленный. Автоскачивание из `oxide-lab/TRELLIS.2-4B` зарезервировано, но репозиторий ещё не опубликован, поэтому передавайте явный `--model-path` (canonical-пакет или сырой каталог checkpoint'ов).
 
 > **Экспериментальные бэкенды (Vulkan / WGPU):** выбор устройства через `--device`:
 >
@@ -562,4 +582,4 @@ Upstream-модельные артефакты и canonical weights сохран
 
 **TripoSG:** upstream-код и веса — MIT. Сырой checkpoint лежит в `VAST-AI/TripoSG`; canonical package для `--model-path`/автоскачивания публикуется как `oxide-lab/TripoSG`. Upstream `load_image` использует BriaRMBG 1.4, когда нет валидной alpha-маски; Lux3D реализует этот fallback полностью. Веса RMBG не входят в MIT-пакет TripoSG: они нормализованы в отдельный canonical package `rmbg-1.4` (лицензия BRIA, source-available/non-commercial; для коммерческого использования нужна лицензия BRIA) и подключаются через `--rmbg-model-path` или соседнюю папку `rmbg-1.4`. Upstream pipeline по умолчанию использует flash decoder (`use_flash_decoder=True`, `flash_octree_depth=9`); Lux3D реализует тот же flash SDF-планировщик и clean-room Rust DiffDMC. Код и таблицы Diso (CC BY-NC 4.0) не копируются, поэтому на редких ambiguous-ячейках топология может отличаться; non-flash путь остаётся доступен через `--flash-decoder false`. Также реализован полный VAE encode API (FPS-сэмплирование, `vae.quant`, распределение mean/logvar/std), хотя image-to-3D pipeline вызывает только `vae.decode`.
 
-**TRELLIS.2:** upstream-код (`microsoft/TRELLIS.2`) и model card `microsoft/TRELLIS.2-4B` лицензированы под MIT; референс зеркалируется в `candle-3d-refs/TRELLIS.2`. Получите веса в upstream-репозитории и нормализуйте командой `weights normalize ... trellis2` перед запуском. Встроенный DINOv3 ViT-L/16 — отдельная gated-модель Meta со своей лицензией; проверьте её условия независимо, доступ к DINOv3 может требоваться отдельно от TRELLIS.2. RMBG-2.0/BiRefNet в этот пайплайн не входит: стадия удаления фона исключена, подавайте изображения с валидным alpha-каналом.
+**TRELLIS.2:** upstream-код (`microsoft/TRELLIS.2`) и model card `microsoft/TRELLIS.2-4B` лицензированы под MIT; референс зеркалируется в `candle-3d-refs/TRELLIS.2`. Получите веса в upstream-репозитории и нормализуйте командой `weights normalize ... trellis2` перед запуском. Встроенный DINOv3 ViT-L/16 — отдельная gated-модель Meta со своей лицензией; проверьте её условия независимо, доступ к DINOv3 может требоваться отдельно от TRELLIS.2. Референсное удаление фона RMBG-2.0 (BiRefNet/Swin-L) реализовано и используется для RGB-входа; его веса не входят в MIT-пакет TRELLIS.2. Нормализуйте их под auxiliary-семейством `rmbg2` и передавайте `--rmbg-model-path` (либо положите `rmbg-2.0` рядом с `--model-path`). RMBG-2.0 лицензирован CC-BY-NC-4.0 (non-commercial); коммерческое использование — по условиям BRIA.
