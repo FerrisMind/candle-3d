@@ -2,14 +2,13 @@
 //! `trellis2/pipelines/trellis2_image_to_3d.py:127-162` alpha path plus the
 //! `DinoV3FeatureExtractor.__call__` resize/normalize stage, `:95-118`).
 //!
-//! Pipeline (upstream alpha branch; RMBG-2.0 is a documented contract
-//! exclusion in this slice — an input without a usable alpha channel is
-//! treated as fully opaque, matching `has_alpha == false` semantics without
-//! invoking rembg):
+//! Pipeline:
 //!
 //! 1. alpha usage: RGBA is honored only when the alpha channel exists and is
 //!    not all 255 (`mode == 'RGBA'` plus `np.all(alpha == 255)` check). Any
-//!    other input is opaque, alpha = 255 everywhere;
+//!    other input is converted to RGB and passed through the reference
+//!    RMBG-2.0/BiRefNet background remover; a missing remover is an error
+//!    rather than a silent opaque fallback;
 //! 2. downscale so `max(H, W) <= 1024` with dimensions
 //!    `(int(w * scale), int(h * scale))`, `scale = min(1, 1024 / max_size)`,
 //!    Pillow `LANCZOS` (alpha included);
@@ -22,28 +21,27 @@
 //!    (round-half-to-even). The crop may extend outside the image; Pillow
 //!    fills out-of-bounds pixels with transparent black;
 //! 5. convert to float32 `/255`, premultiply RGB by alpha, quantize with
-//!    `(value * 255).astype(np.uint8)` truncation. Opaque inputs skip the
-//!    premultiply multiply (the reference always premultiplies the rembg
-//!    output; with alpha exactly 1 the multiplication is mathematically a
-//!    no-op and skipping it avoids the `(v / 255) * 255` f32 rounding the
-//!    reference never exercises);
+//!    `(value * 255).astype(np.uint8)` truncation;
 //! 6. resize the square crop to `resolution x resolution` (512 or 1024) with
 //!    Pillow `LANCZOS` for DINOv3, then `/255` and ImageNet
 //!    `(x - mean) / std` normalization in CHW layout.
 //!
-//! Both LANCZOS resamples are bit-exact ports of Pillow 12.3.0
-//! `ImagingResample` for 8-bit images (`src/libImaging/Resample.c`):
-//! double-precision coefficients quantized to INT32 with
-//! `PRECISION_BITS = 32 - 8 - 2`, half-LSB accumulator
-//! (`1 << (PRECISION_BITS - 1)`), arithmetic-shift extraction and the clip8
-//! saturating table. This mirrors the TripoSG decision to port the reference
-//! resampler instead of using `image::imageops` (whose `Lanczos3` differs by
-//! +-1 LSB on edge pixels and would break the golden pixel parity).
+//! The RMBG-2.0 wrapper is reproduced exactly: Pillow BILINEAR resize to
+//! 1024x1024, ImageNet normalization, `sigmoid`, truncating uint8 conversion,
+//! then Pillow BICUBIC resize of the mask back to the working RGB size.
+//!
+//! Every resample is a bit-exact port of Pillow 12.3.0 `ImagingResample` for
+//! 8-bit images (`src/libImaging/Resample.c`): double-precision coefficients
+//! quantized to INT32 with `PRECISION_BITS = 32 - 8 - 2`, half-LSB
+//! accumulator (`1 << (PRECISION_BITS - 1)`), arithmetic-shift extraction and
+//! the clip8 saturating table. This mirrors the TripoSG decision to port the
+//! reference resampler instead of using `image::imageops` (whose filters
+//! differ by +-1 LSB on edge pixels and would break golden pixel parity).
 
 use std::path::Path;
 
 use candle_core::{Device, Tensor};
-use image::{DynamicImage, ImageReader, RgbImage, RgbaImage};
+use image::{ColorType, DynamicImage, ImageReader, RgbImage, RgbaImage};
 
 use crate::{
     Result,
@@ -68,8 +66,46 @@ pub const TRELLIS2_IMAGE_NET_STD: [f32; 3] = [0.229, 0.224, 0.225];
 /// Pillow `ImagingResample` fixed-point precision for 8-bit images
 /// (`#define PRECISION_BITS (32 - 8 - 2)`).
 const PIL_PRECISION_BITS: u32 = 22;
-/// Pillow LANCZOS filter support (`static struct filter LANCZOS ... 3.0`).
-const PIL_LANCZOS_SUPPORT: f64 = 3.0;
+/// Pillow filter kernels used by the reference preprocessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PillowFilter {
+    /// `Image.Resampling.BILINEAR`: torchvision `transforms.Resize` default.
+    Bilinear,
+    /// `Image.Resampling.BICUBIC`: Pillow `Image.resize()` default.
+    Bicubic,
+    /// `Image.Resampling.LANCZOS`: TRELLIS.2 outer downscale and DINOv3 resize.
+    Lanczos,
+}
+
+impl PillowFilter {
+    fn support(self) -> f64 {
+        match self {
+            Self::Bilinear => 1.0,
+            Self::Bicubic => 2.0,
+            Self::Lanczos => 3.0,
+        }
+    }
+
+    fn kernel(self, x: f64) -> f64 {
+        match self {
+            Self::Bilinear => {
+                let x = x.abs();
+                if x < 1.0 { 1.0 - x } else { 0.0 }
+            }
+            Self::Bicubic => {
+                let x = x.abs();
+                if x < 1.0 {
+                    ((1.5 * x - 2.5) * x) * x + 1.0
+                } else if x < 2.0 {
+                    (((-0.5 * x + 2.5) * x) - 4.0) * x + 2.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Lanczos => pil_lanczos_filter(x),
+        }
+    }
+}
 
 /// Geometry actually used by the reference crop, recorded for tests and
 /// golden metadata (all values are the post-`round()` Pillow crop box plus
@@ -86,6 +122,34 @@ pub struct Trellis2CropInfo {
     pub has_alpha: bool,
     /// Source size fed to the crop (after the <=1024 downscale).
     pub downscaled_size: (u32, u32),
+}
+
+/// Background remover used by the reference RGB branch. Implemented by the
+/// candle RMBG-2.0/BiRefNet runtime; tests can supply a deterministic stub.
+pub trait Trellis2BackgroundRemover: Send + Sync {
+    fn remove_background(&self, rgb: &RgbImage) -> Result<RgbaImage>;
+}
+
+/// Resolution-independent output of the reference `preprocess_image` step.
+#[derive(Debug, Clone)]
+pub struct Trellis2PreparedCrop {
+    rgb: RgbImage,
+    info: Trellis2CropInfo,
+    original_size: SpatialSize,
+}
+
+impl Trellis2PreparedCrop {
+    pub fn rgb(&self) -> &RgbImage {
+        &self.rgb
+    }
+
+    pub fn crop_info(&self) -> &Trellis2CropInfo {
+        &self.info
+    }
+
+    pub fn original_size(&self) -> SpatialSize {
+        self.original_size
+    }
 }
 
 /// TRELLIS.2 image preprocess stage. `resolution` is the DINOv3 input side
@@ -124,18 +188,55 @@ impl Trellis2Preprocess {
 
     /// Run the full preprocessing pipeline on an already-decoded image.
     ///
-    /// Alpha is honored only when the decoded source carries an alpha
-    /// channel and it is not all 255; otherwise the image is treated as
-    /// fully opaque (the RMBG-2.0 background-removal branch is a documented
-    /// contract exclusion, mirroring the TripoSG decision).
+    /// RGB inputs (and RGBA inputs whose alpha is all 255) require an
+    /// RMBG-2.0 background remover; this overload fails instead of silently
+    /// treating the image as opaque.
     pub fn prepare_dynamic_image(&self, image: &DynamicImage) -> Result<Trellis2PreparedImage> {
+        self.prepare_dynamic_image_with_rembg(image, None)
+    }
+
+    /// [`Self::prepare_dynamic_image`] with an explicit RMBG-2.0 remover.
+    pub fn prepare_dynamic_image_with_rembg(
+        &self,
+        image: &DynamicImage,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
+    ) -> Result<Trellis2PreparedImage> {
+        let crop = self.prepare_crop_from_dynamic_image(image, remover)?;
+        self.resize_crop(&crop)
+    }
+
+    /// Decode the source and run the reference crop once, before any
+    /// resolution-specific resize. The 1024_cascade pipeline uses this to
+    /// avoid running RMBG-2.0 twice.
+    pub fn prepare_crop_from_path(
+        &self,
+        source: &Path,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
+    ) -> Result<Trellis2PreparedCrop> {
+        let image = ImageReader::open(source)
+            .map_err(|_| Lux3dError::InvalidInput("failed to open TRELLIS.2 input image"))?
+            .decode()
+            .map_err(|_| Lux3dError::InvalidInput("failed to decode TRELLIS.2 input image"))?;
+        self.prepare_crop_from_dynamic_image(&image, remover)
+    }
+
+    /// Run the reference crop on an already-decoded image.
+    pub fn prepare_crop_from_dynamic_image(
+        &self,
+        image: &DynamicImage,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
+    ) -> Result<Trellis2PreparedCrop> {
         if image.width() == 0 || image.height() == 0 {
             return Err(Lux3dError::InvalidInput("TRELLIS.2 input image is empty"));
         }
-        let has_alpha_channel = image.color().has_alpha();
+        // Reference checks `input.mode == 'RGBA'`; greyscale+alpha modes do
+        // not take the alpha branch even though they carry an alpha channel.
+        let has_alpha_channel = matches!(
+            image.color(),
+            ColorType::Rgba8 | ColorType::Rgba16 | ColorType::Rgba32F
+        );
         let rgba = image.to_rgba8();
-        let (prepared, _crop) = self.prepare_rgba8(&rgba, has_alpha_channel)?;
-        Ok(prepared)
+        self.prepare_crop_from_rgba8(&rgba, has_alpha_channel, remover)
     }
 
     /// Same as [`Self::prepare_dynamic_image`] but also returns the crop
@@ -145,17 +246,34 @@ impl Trellis2Preprocess {
         rgba: &RgbaImage,
         has_alpha_channel: bool,
     ) -> Result<(Trellis2PreparedImage, Trellis2CropInfo)> {
-        if rgba.width() == 0 || rgba.height() == 0 {
-            return Err(Lux3dError::InvalidInput("TRELLIS.2 input image is empty"));
-        }
-        self.prepare_rgba8(rgba, has_alpha_channel)
+        self.prepare_rgba8_with_crop_and_rembg(rgba, has_alpha_channel, None)
     }
 
-    fn prepare_rgba8(
+    /// [`Self::prepare_rgba8_with_crop`] with an explicit RMBG-2.0 remover.
+    pub fn prepare_rgba8_with_crop_and_rembg(
         &self,
         rgba: &RgbaImage,
         has_alpha_channel: bool,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
     ) -> Result<(Trellis2PreparedImage, Trellis2CropInfo)> {
+        let crop = self.prepare_crop_from_rgba8(rgba, has_alpha_channel, remover)?;
+        let info = crop.info.clone();
+        Ok((self.resize_crop(&crop)?, info))
+    }
+
+    /// Reference `preprocess_image` core: max-side downscale, optional
+    /// RMBG-2.0, alpha bbox, square crop, premultiply. The returned RGB crop
+    /// is resolution-independent; both 512 and 1024 DINOv3 inputs are
+    /// produced from it with [`Self::resize_crop`].
+    pub fn prepare_crop_from_rgba8(
+        &self,
+        rgba: &RgbaImage,
+        has_alpha_channel: bool,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
+    ) -> Result<Trellis2PreparedCrop> {
+        if rgba.width() == 0 || rgba.height() == 0 {
+            return Err(Lux3dError::InvalidInput("TRELLIS.2 input image is empty"));
+        }
         let (width, height) = rgba.dimensions();
         let has_alpha = has_alpha_channel && !is_alpha_fully_opaque(rgba);
 
@@ -163,17 +281,37 @@ impl Trellis2Preprocess {
         let downscaled = downscale_to_max_side(rgba, TRELLIS2_MAX_INPUT_SIDE);
         let downscaled_size = downscaled.dimensions();
 
-        // 3. Foreground bbox over alpha > 0.8 * 255; opaque inputs are
-        //    alpha 255 everywhere, so the bbox spans the whole image.
-        let bbox = if has_alpha {
-            alpha_foreground_bbox(&downscaled).ok_or(Lux3dError::InvalidInput(
-                "TRELLIS.2 input alpha channel has no pixel above the 0.8 foreground threshold",
-            ))?
+        // 3. No usable alpha: run RMBG-2.0 on the downscaled RGB image.
+        let output = if has_alpha {
+            downscaled
         } else {
-            (0, 0, downscaled.width() - 1, downscaled.height() - 1)
+            let rgb = rgb_from_rgba(&downscaled);
+            let remover = remover.ok_or_else(|| {
+                Lux3dError::InvalidInput(
+                    "TRELLIS.2 input has no usable alpha channel and no RMBG-2.0 model was configured",
+                )
+            })?;
+            let rgba = remover.remove_background(&rgb)?;
+            if rgba.dimensions() != (rgb.width(), rgb.height()) {
+                return Err(Lux3dError::ContractValidation {
+                    message: format!(
+                        "RMBG-2.0 returned {}x{} for a {}x{} input",
+                        rgba.width(),
+                        rgba.height(),
+                        rgb.width(),
+                        rgb.height()
+                    ),
+                });
+            }
+            rgba
         };
 
-        // 4. Square crop box (Pillow `map(int, map(round, box))` rounding).
+        // 4. Foreground bbox over alpha > 0.8 * 255.
+        let bbox = alpha_foreground_bbox(&output).ok_or(Lux3dError::InvalidInput(
+            "TRELLIS.2 alpha channel has no pixel above the 0.8 foreground threshold",
+        ))?;
+
+        // 5. Square crop box (Pillow `map(int, map(round, box))` rounding).
         let crop_box = reference_crop_box(bbox);
         let crop_w = (crop_box.2 - crop_box.0).max(0) as u32;
         let crop_h = (crop_box.3 - crop_box.1).max(0) as u32;
@@ -183,10 +321,25 @@ impl Trellis2Preprocess {
             });
         }
 
-        // 5. Crop (zero-filled outside the source) + premultiply.
-        let cropped = square_crop_premultiplied(&downscaled, crop_box, has_alpha);
+        // 6. Crop (zero-filled outside the source) + premultiply.
+        let cropped = crop_premultiplied_rgb(&output, crop_box);
 
-        // 6. Resize the square to `resolution x resolution` (LANCZOS).
+        Ok(Trellis2PreparedCrop {
+            original_size: SpatialSize::new(width, height),
+            info: Trellis2CropInfo {
+                bbox,
+                crop_box,
+                crop_size: crop_w,
+                has_alpha,
+                downscaled_size,
+            },
+            rgb: cropped,
+        })
+    }
+
+    /// Resize a previously prepared crop to this stage's `resolution`.
+    pub fn resize_crop(&self, crop: &Trellis2PreparedCrop) -> Result<Trellis2PreparedImage> {
+        let cropped = &crop.rgb;
         let resized = resize_lanczos_u8::<3>(
             cropped.as_raw(),
             cropped.width() as usize,
@@ -196,18 +349,9 @@ impl Trellis2Preprocess {
         );
         let resized = RgbImage::from_raw(self.resolution, self.resolution, resized)
             .expect("resized buffer dimensions");
-
-        let crop_info = Trellis2CropInfo {
-            bbox,
-            crop_box,
-            crop_size: crop_w,
-            has_alpha,
-            downscaled_size,
-        };
-
-        let prepared = Trellis2PreparedImage {
+        Ok(Trellis2PreparedImage {
             family: ModelFamily::Trellis2,
-            original_size: SpatialSize::new(width, height),
+            original_size: crop.original_size,
             target_size: SpatialSize::new(self.resolution, self.resolution),
             uint8_rgb: resized.into_raw(),
             point: None,
@@ -215,8 +359,7 @@ impl Trellis2Preprocess {
                 "pixel_values",
                 vec![1, 3, self.resolution as usize, self.resolution as usize],
             ),
-        };
-        Ok((prepared, crop_info))
+        })
     }
 
     /// Contract-style preprocess from pixel buffers. Values are f32 in
@@ -225,6 +368,16 @@ impl Trellis2Preprocess {
     /// runs, which keeps a single exact core path (the reference itself is
     /// uint8-native; this mirrors the TripoSG contract-stage quantization).
     pub fn preprocess(&self, input: Trellis2RawInput) -> Result<Trellis2PreparedImage> {
+        self.preprocess_with_rembg(input, None)
+    }
+
+    /// Contract-style preprocess with an explicit RMBG-2.0 remover for
+    /// buffers without a usable alpha channel.
+    pub fn preprocess_with_rembg(
+        &self,
+        input: Trellis2RawInput,
+        remover: Option<&dyn Trellis2BackgroundRemover>,
+    ) -> Result<Trellis2PreparedImage> {
         let plane = (input.original_size.width as usize)
             .checked_mul(input.original_size.height as usize)
             .ok_or_else(|| Lux3dError::InvalidInput("TRELLIS.2 input size overflows usize"))?;
@@ -279,8 +432,8 @@ impl Trellis2Preprocess {
                 .ok_or_else(|| {
                     Lux3dError::InvalidInput("TRELLIS.2 raw input buffer size mismatch")
                 })?;
-        let (prepared, _) = self.prepare_rgba8(&image, has_alpha_channel)?;
-        Ok(prepared)
+        let crop = self.prepare_crop_from_rgba8(&image, has_alpha_channel, remover)?;
+        self.resize_crop(&crop)
     }
 
     /// `[1, 3, res, res]` f32 tensor with `(v / 255 - mean) / std` ImageNet
@@ -340,6 +493,17 @@ pub fn normalized_pixel_values_from_u8(
 /// True when every alpha byte is 255 (reference `np.all(alpha == 255)`).
 fn is_alpha_fully_opaque(image: &RgbaImage) -> bool {
     image.pixels().all(|pixel| pixel[3] == 255)
+}
+
+/// `Image.convert("RGB")` on the downscaled RGBA buffer.
+fn rgb_from_rgba(image: &RgbaImage) -> RgbImage {
+    let mut out = vec![0_u8; image.width() as usize * image.height() as usize * 3];
+    for (index, pixel) in image.pixels().enumerate() {
+        out[index * 3] = pixel[0];
+        out[index * 3 + 1] = pixel[1];
+        out[index * 3 + 2] = pixel[2];
+    }
+    RgbImage::from_raw(image.width(), image.height(), out).expect("RGB buffer dimensions")
 }
 
 /// Bounding box of `alpha >= TRELLIS2_ALPHA_THRESHOLD` as inclusive
@@ -428,26 +592,15 @@ fn downscale_to_max_side(image: &RgbaImage, max_side: u32) -> RgbaImage {
 /// intermediate artifact the reference `preprocess_image` returns (a square
 /// premultiplied RGB image); golden tests compare it directly. See
 /// [`crop_premultiplied_rgb`] for the arithmetic notes.
-pub fn square_crop_premultiplied(
-    image: &RgbaImage,
-    box_xyxy: (i64, i64, i64, i64),
-    has_alpha: bool,
-) -> RgbImage {
-    crop_premultiplied_rgb(image, box_xyxy, has_alpha)
+pub fn square_crop_premultiplied(image: &RgbaImage, box_xyxy: (i64, i64, i64, i64)) -> RgbImage {
+    crop_premultiplied_rgb(image, box_xyxy)
 }
 
 /// Crop the (possibly out-of-bounds) Pillow box and premultiply RGB by alpha
 /// exactly like the reference numpy path:
 /// `((rgb / 255) * (alpha / 255) * 255).astype(np.uint8)` with f32 division
-/// and multiplication. Opaque inputs (`has_alpha == false`) pass RGB through
-/// unchanged (alpha 255 premultiply is a mathematical no-op; skipping the
-/// f32 multiply avoids a rounding step the reference never exercises on the
-/// no-RMBG path).
-fn crop_premultiplied_rgb(
-    image: &RgbaImage,
-    box_xyxy: (i64, i64, i64, i64),
-    has_alpha: bool,
-) -> RgbImage {
+/// and multiplication.
+fn crop_premultiplied_rgb(image: &RgbaImage, box_xyxy: (i64, i64, i64, i64)) -> RgbImage {
     let (x0, y0, x1, y1) = box_xyxy;
     let out_w = (x1 - x0).max(0) as u32;
     let out_h = (y1 - y0).max(0) as u32;
@@ -466,16 +619,10 @@ fn crop_premultiplied_rgb(
                 // Pillow crop fills out-of-bounds with transparent black.
                 continue;
             };
-            if has_alpha {
-                for channel in 0..3 {
-                    let rgb = f32::from(pixel[channel]) / 255.0;
-                    let alpha = f32::from(pixel[3]) / 255.0;
-                    out[target + channel] = (rgb * alpha * 255.0) as u8;
-                }
-            } else {
-                out[target] = pixel[0];
-                out[target + 1] = pixel[1];
-                out[target + 2] = pixel[2];
+            for channel in 0..3 {
+                let rgb = f32::from(pixel[channel]) / 255.0;
+                let alpha = f32::from(pixel[3]) / 255.0;
+                out[target + channel] = (rgb * alpha * 255.0) as u8;
             }
         }
     }
@@ -519,11 +666,15 @@ fn pil_clip8(accumulator: i64) -> u8 {
 ///
 /// Returns the per-output-pixel `(xmin, count)` bounds and the INT32
 /// quantized coefficients (row stride `ksize`).
-fn pil_resample_coeffs(in_size: usize, out_size: usize) -> (usize, Vec<(usize, usize)>, Vec<i32>) {
+fn pil_resample_coeffs(
+    in_size: usize,
+    out_size: usize,
+    filter: PillowFilter,
+) -> (usize, Vec<(usize, usize)>, Vec<i32>) {
     // filterscale = scale = (in1 - in0) / outSize, floored at 1.0
     let scale = in_size as f64 / out_size as f64;
     let filterscale = scale.max(1.0);
-    let support = PIL_LANCZOS_SUPPORT * filterscale;
+    let support = filter.support() * filterscale;
     let ksize = support.ceil() as usize * 2 + 1;
     let inv_filterscale = 1.0 / filterscale;
 
@@ -544,7 +695,7 @@ fn pil_resample_coeffs(in_size: usize, out_size: usize) -> (usize, Vec<(usize, u
         let row = &mut coefficients[xx * ksize..xx * ksize + ksize];
         let mut weight_sum = 0.0_f64;
         for (x, weight) in row.iter_mut().enumerate().take(count) {
-            *weight = pil_lanczos_filter((x as f64 + xmin as f64 - center + 0.5) * inv_filterscale);
+            *weight = filter.kernel((x as f64 + xmin as f64 - center + 0.5) * inv_filterscale);
             weight_sum += *weight;
         }
         if weight_sum != 0.0 {
@@ -633,23 +784,24 @@ fn pil_resample_vertical<const C: usize>(
     output
 }
 
-/// Pillow `ImagingResample` for 8-bit `C`-channel images with the LANCZOS
-/// filter and the identity box: horizontal pass first (skipped when the
-/// width is unchanged, matching `need_horizontal`), then the vertical pass
-/// (skipped when the height is unchanged).
-pub(crate) fn resize_lanczos_u8<const C: usize>(
+/// Pillow `ImagingResample` for 8-bit `C`-channel images and the identity
+/// box: horizontal pass first (skipped when the width is unchanged, matching
+/// `need_horizontal`), then the vertical pass (skipped when the height is
+/// unchanged).
+fn resize_pil_u8<const C: usize>(
     source: &[u8],
     in_width: usize,
     in_height: usize,
     out_width: usize,
     out_height: usize,
+    filter: PillowFilter,
 ) -> Vec<u8> {
     if in_width == out_width && in_height == out_height {
         return source.to_vec();
     }
     let mut current = source.to_vec();
     if out_width != in_width {
-        let (ksize, bounds, coefficients) = pil_resample_coeffs(in_width, out_width);
+        let (ksize, bounds, coefficients) = pil_resample_coeffs(in_width, out_width, filter);
         current = pil_resample_horizontal::<C>(
             &current,
             in_width,
@@ -661,7 +813,7 @@ pub(crate) fn resize_lanczos_u8<const C: usize>(
         );
     }
     if out_height != in_height {
-        let (ksize, bounds, coefficients) = pil_resample_coeffs(in_height, out_height);
+        let (ksize, bounds, coefficients) = pil_resample_coeffs(in_height, out_height, filter);
         current = pil_resample_vertical::<C>(
             &current,
             out_width,
@@ -672,6 +824,60 @@ pub(crate) fn resize_lanczos_u8<const C: usize>(
         );
     }
     current
+}
+
+/// Pillow LANCZOS resize (reference downscale and DINOv3 input).
+pub(crate) fn resize_lanczos_u8<const C: usize>(
+    source: &[u8],
+    in_width: usize,
+    in_height: usize,
+    out_width: usize,
+    out_height: usize,
+) -> Vec<u8> {
+    resize_pil_u8::<C>(
+        source,
+        in_width,
+        in_height,
+        out_width,
+        out_height,
+        PillowFilter::Lanczos,
+    )
+}
+
+/// Pillow BILINEAR resize (torchvision `transforms.Resize((1024, 1024))`).
+pub(crate) fn resize_bilinear_u8<const C: usize>(
+    source: &[u8],
+    in_width: usize,
+    in_height: usize,
+    out_width: usize,
+    out_height: usize,
+) -> Vec<u8> {
+    resize_pil_u8::<C>(
+        source,
+        in_width,
+        in_height,
+        out_width,
+        out_height,
+        PillowFilter::Bilinear,
+    )
+}
+
+/// Pillow BICUBIC resize (Pillow `Image.resize()` default for the mask).
+pub(crate) fn resize_bicubic_u8<const C: usize>(
+    source: &[u8],
+    in_width: usize,
+    in_height: usize,
+    out_width: usize,
+    out_height: usize,
+) -> Vec<u8> {
+    resize_pil_u8::<C>(
+        source,
+        in_width,
+        in_height,
+        out_width,
+        out_height,
+        PillowFilter::Bicubic,
+    )
 }
 
 #[cfg(test)]
@@ -751,25 +957,29 @@ mod tests {
         // alpha 128 / rgb 255: (255/255) * (128/255) * 255 with the exact
         // f32 rounding sequence replicated from the numpy path.
         let image = rgba_image(1, 1, |_, _| [255, 128, 0, 128]);
-        let cropped = crop_premultiplied_rgb(&image, (0, 0, 1, 1), true);
+        let cropped = crop_premultiplied_rgb(&image, (0, 0, 1, 1));
         let expected_r = (1.0_f32 * (128.0_f32 / 255.0) * 255.0) as u8;
         let expected_g = (f32::from(128_u8) / 255.0 * (f32::from(128_u8) / 255.0) * 255.0) as u8;
         assert_eq!(*cropped.get_pixel(0, 0), rgb(expected_r, expected_g, 0));
-        // Opaque path is an exact pass-through (no f32 premultiply rounding).
-        let opaque = crop_premultiplied_rgb(&image, (0, 0, 1, 1), false);
-        assert_eq!(*opaque.get_pixel(0, 0), rgb(255, 128, 0));
     }
 
     #[test]
     fn crop_extends_outside_image_with_transparent_black_fill() {
         // 2x2 image, crop box (-1, -1, 3, 3): out-of-bounds pixels are 0.
         let image = rgba_image(2, 2, |x, y| [10 * x as u8 + 1, 20 * y as u8 + 2, 3, 255]);
-        let cropped = crop_premultiplied_rgb(&image, (-1, -1, 3, 3), false);
+        let cropped = crop_premultiplied_rgb(&image, (-1, -1, 3, 3));
         assert_eq!(cropped.width(), 4);
         assert_eq!(cropped.height(), 4);
         assert_eq!(*cropped.get_pixel(0, 0), rgb(0, 0, 0));
-        assert_eq!(*cropped.get_pixel(1, 1), rgb(1, 2, 3));
-        assert_eq!(*cropped.get_pixel(2, 2), rgb(11, 22, 3));
+        let premul = |v: u8| (f32::from(v) / 255.0 * (255.0_f32 / 255.0) * 255.0) as u8;
+        assert_eq!(
+            *cropped.get_pixel(1, 1),
+            rgb(premul(1), premul(2), premul(3))
+        );
+        assert_eq!(
+            *cropped.get_pixel(2, 2),
+            rgb(premul(11), premul(22), premul(3))
+        );
         assert_eq!(*cropped.get_pixel(3, 3), rgb(0, 0, 0));
     }
 
@@ -810,7 +1020,7 @@ mod tests {
         let stage = Trellis2Preprocess::new(512).expect("stage");
         let image = rgba_image(100, 100, |x, y| [(x % 255) as u8, (y % 255) as u8, 7, 255]);
         let (prepared, crop) = stage
-            .prepare_rgba8_with_crop(&image, false)
+            .prepare_rgba8_with_crop_and_rembg(&image, false, Some(&OpaqueRemover))
             .expect("prepared");
         assert!(!crop.has_alpha);
         assert_eq!(crop.bbox, (0, 0, 99, 99));
@@ -843,6 +1053,18 @@ mod tests {
         assert_eq!(prepared.target_size, SpatialSize::new(512, 512));
     }
 
+    struct OpaqueRemover;
+
+    impl Trellis2BackgroundRemover for OpaqueRemover {
+        fn remove_background(&self, rgb: &RgbImage) -> Result<RgbaImage> {
+            let mut out = RgbaImage::new(rgb.width(), rgb.height());
+            for (x, y, pixel) in rgb.enumerate_pixels() {
+                out.put_pixel(x, y, image::Rgba([pixel[0], pixel[1], pixel[2], 255]));
+            }
+            Ok(out)
+        }
+    }
+
     #[test]
     fn contract_preprocess_quantizes_and_rejects_bad_inputs() {
         let stage = Trellis2Preprocess::new(512).expect("stage");
@@ -854,7 +1076,9 @@ mod tests {
             rgba: Some(vec![[1.0, 0.5, 0.0, 1.0]; 9]),
             rgb: None,
         };
-        let prepared = stage.preprocess(raw).expect("prepared");
+        let prepared = stage
+            .preprocess_with_rembg(raw, Some(&OpaqueRemover))
+            .expect("prepared");
         assert_eq!(prepared.uint8_rgb.len(), 512 * 512 * 3);
         assert_eq!(prepared.pixel_values.dims, vec![1, 3, 512, 512]);
         let missing = Trellis2RawInput {
@@ -888,5 +1112,48 @@ mod tests {
         assert!((values[4] - expected_g).abs() < 1e-6);
         let expected_b = (0.0 - TRELLIS2_IMAGE_NET_MEAN[2]) / TRELLIS2_IMAGE_NET_STD[2];
         assert!((values[8] - expected_b).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pillow_bilinear_and_bicubic_match_reference_bytes() {
+        let golden = Path::new("../../.swarm/results/trellis2-rmbg2-golden/preprocess_golden.npz");
+        if !golden.exists() {
+            eprintln!("skipping Pillow resampler parity: golden fixture missing");
+            return;
+        }
+        let mut npz = ndarray_npy::NpzReader::new(std::fs::File::open(golden).unwrap()).unwrap();
+        let source = npz
+            .by_name::<ndarray::OwnedRepr<u8>, ndarray::Ix3>("downscaled_rgb")
+            .expect("downscaled_rgb");
+        let expected = npz
+            .by_name::<ndarray::OwnedRepr<u8>, ndarray::Ix3>("rembg_input_rgb")
+            .expect("rembg_input_rgb");
+        let got = resize_bilinear_u8::<3>(
+            source.as_slice().unwrap(),
+            source.shape()[1],
+            source.shape()[0],
+            expected.shape()[1],
+            expected.shape()[0],
+        );
+        assert_eq!(got, expected.as_slice().unwrap(), "Pillow BILINEAR drift");
+
+        let pred = npz
+            .by_name::<ndarray::OwnedRepr<u8>, ndarray::Ix2>("rembg_pred_u8_1024")
+            .expect("rembg_pred_u8_1024");
+        let expected_mask = npz
+            .by_name::<ndarray::OwnedRepr<u8>, ndarray::Ix2>("rembg_mask_u8")
+            .expect("rembg_mask_u8");
+        let got = resize_bicubic_u8::<1>(
+            pred.as_slice().unwrap(),
+            pred.shape()[1],
+            pred.shape()[0],
+            expected_mask.shape()[1],
+            expected_mask.shape()[0],
+        );
+        assert_eq!(
+            got,
+            expected_mask.as_slice().unwrap(),
+            "Pillow BICUBIC drift"
+        );
     }
 }

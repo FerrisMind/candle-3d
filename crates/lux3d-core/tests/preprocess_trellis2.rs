@@ -5,9 +5,23 @@
 use image::{Rgba, RgbaImage};
 use lux3d_core::contracts::{ModelFamily, SpatialSize, TensorContract, Trellis2RawInput};
 use lux3d_core::preprocess::{
-    TRELLIS2_ALPHA_THRESHOLD, Trellis2Preprocess, alpha_foreground_bbox, reference_crop_box,
-    square_crop_premultiplied,
+    TRELLIS2_ALPHA_THRESHOLD, Trellis2BackgroundRemover, Trellis2Preprocess, alpha_foreground_bbox,
+    reference_crop_box, square_crop_premultiplied,
 };
+
+/// Deterministic stand-in for RMBG-2.0: alpha 255 everywhere. The
+/// geometry tests only need the reference post-rembg crop path.
+struct OpaqueRemover;
+
+impl Trellis2BackgroundRemover for OpaqueRemover {
+    fn remove_background(&self, rgb: &image::RgbImage) -> lux3d_core::Result<RgbaImage> {
+        let mut out = RgbaImage::new(rgb.width(), rgb.height());
+        for (x, y, pixel) in rgb.enumerate_pixels() {
+            out.put_pixel(x, y, Rgba([pixel[0], pixel[1], pixel[2], 255]));
+        }
+        Ok(out)
+    }
+}
 
 fn rgba_image(width: u32, height: u32, fill: impl Fn(u32, u32) -> [u8; 4]) -> RgbaImage {
     let mut image = RgbaImage::new(width, height);
@@ -29,16 +43,16 @@ fn alpha_threshold_matches_reference_comparison() {
     assert_eq!(TRELLIS2_ALPHA_THRESHOLD, 205);
 }
 
-/// A fully-opaque input behaves like the reference `has_alpha == false`
-/// branch without RMBG: bbox spans the whole (downscaled) image and the
-/// Pillow banker's rounding of the `.5` center shrinks a 100x100 opaque
-/// source to a 98x98 crop (reference arithmetic, not a port bug).
+/// A fully-opaque input takes the reference `has_alpha == false` RMBG
+/// branch: bbox spans the whole rembg output and the Pillow banker's
+/// rounding of the `.5` center shrinks a 100x100 opaque source to a 98x98
+/// crop (reference arithmetic, not a port bug).
 #[test]
 fn opaque_input_uses_whole_image_bbox_and_reference_rounding() {
     let stage = Trellis2Preprocess::new(512).expect("stage");
     let image = rgba_image(100, 100, |x, y| [x as u8, y as u8, 32, 255]);
     let (prepared, crop) = stage
-        .prepare_rgba8_with_crop(&image, false)
+        .prepare_rgba8_with_crop_and_rembg(&image, false, Some(&OpaqueRemover))
         .expect("prepared");
     assert!(!crop.has_alpha);
     assert_eq!(crop.bbox, (0, 0, 99, 99));
@@ -83,7 +97,7 @@ fn alpha_input_square_crop_geometry() {
 fn premultiply_and_padding_match_reference() {
     let image = rgba_image(2, 2, |x, y| [255, 0, 17 * (x + y) as u8, 128]);
     // Crop box (-1, -1, 3, 3) extends one pixel beyond each edge.
-    let crop = square_crop_premultiplied(&image, (-1, -1, 3, 3), true);
+    let crop = square_crop_premultiplied(&image, (-1, -1, 3, 3));
     assert_eq!(crop.width(), 4);
     assert_eq!(crop.height(), 4);
     // Out-of-bounds pixels are transparent black after premultiply.
@@ -103,9 +117,6 @@ fn premultiply_and_padding_match_reference() {
         *crop.get_pixel(2, 2),
         image::Rgb([expected_a, expected_b, expected_c])
     );
-    // Opaque path passes RGB through unchanged.
-    let opaque = square_crop_premultiplied(&image, (0, 0, 2, 2), false);
-    assert_eq!(*opaque.get_pixel(0, 0), image::Rgb([255, 0, 0]));
 }
 
 /// The <= 1024 downscale is identity below the cap and truncates
@@ -115,25 +126,36 @@ fn downscale_cap_dimensions() {
     let stage = Trellis2Preprocess::new(512).expect("stage");
     let small = rgba_image(614, 614, |_, _| [9, 9, 9, 255]);
     let (_, crop) = stage
-        .prepare_rgba8_with_crop(&small, false)
+        .prepare_rgba8_with_crop_and_rembg(&small, false, Some(&OpaqueRemover))
         .expect("prepared");
     assert_eq!(crop.downscaled_size, (614, 614));
 
     // 2000x1000 -> scale 1024/2000 -> (1024, 512).
     let wide = rgba_image(2000, 1000, |_, _| [0, 0, 0, 255]);
     let (_, crop_wide) = stage
-        .prepare_rgba8_with_crop(&wide, false)
+        .prepare_rgba8_with_crop_and_rembg(&wide, false, Some(&OpaqueRemover))
         .expect("prepared");
     assert_eq!(crop_wide.downscaled_size, (1024, 512));
 }
 
-/// Fully transparent alpha is an error (the reference would run RMBG, which
-/// is excluded by contract).
+/// Fully transparent alpha is an error.
 #[test]
 fn fully_transparent_alpha_is_rejected() {
     let stage = Trellis2Preprocess::new(512).expect("stage");
     let image = rgba_image(8, 8, |_, _| [255, 255, 255, 0]);
     assert!(stage.prepare_rgba8_with_crop(&image, true).is_err());
+}
+
+/// RGB input without a configured RMBG-2.0 remover must fail instead of
+/// silently treating the image as opaque.
+#[test]
+fn rgb_input_without_remover_is_rejected() {
+    let stage = Trellis2Preprocess::new(512).expect("stage");
+    let image = rgba_image(8, 8, |_, _| [1, 2, 3, 255]);
+    let err = stage
+        .prepare_rgba8_with_crop(&image, false)
+        .expect_err("missing RMBG must fail");
+    assert!(err.to_string().contains("RMBG-2.0"));
 }
 
 /// Contract-style `Trellis2RawInput` path quantizes f32 [0, 1] buffers and
@@ -146,7 +168,9 @@ fn raw_input_contract_path() {
         rgba: Some(vec![[1.0, 0.5, 0.25, 1.0]; 9]),
         rgb: None,
     };
-    let prepared = stage.preprocess(raw).expect("prepared");
+    let prepared = stage
+        .preprocess_with_rembg(raw, Some(&OpaqueRemover))
+        .expect("prepared");
     assert_eq!(prepared.target_size, SpatialSize::new(512, 512));
     assert_eq!(prepared.uint8_rgb.len(), 512 * 512 * 3);
 
