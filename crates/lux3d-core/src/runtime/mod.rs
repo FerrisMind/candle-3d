@@ -83,6 +83,7 @@ mod pi3x;
 mod point_camera_ops;
 mod resampling;
 mod rmbg;
+mod rmbg2;
 mod trellis2;
 mod trellis2_blocks;
 mod trellis2_dino;
@@ -111,17 +112,13 @@ pub use pi3x::{
     Pi3xVoPipeline,
 };
 pub use rmbg::{RmbgConfig, RmbgModel};
+pub use rmbg2::{Rmbg2Config, Rmbg2Model, Rmbg2Outputs};
 pub use trellis2::{
     TRELLIS2_CASCADE_HR_RESOLUTION, TRELLIS2_CASCADE_LR_RESOLUTION,
     TRELLIS2_CASCADE_UPSAMPLE_TIMES, TRELLIS2_SHAPE_SLAT_MEAN, TRELLIS2_SHAPE_SLAT_STD,
-    TRELLIS2_TEX_NOISE_SALT, TRELLIS2_TEX_SLAT_MEAN, TRELLIS2_TEX_SLAT_STD,
-    TRELLIS2_VOXEL_MARGIN, Trellis2CascadeShape, Trellis2Pipeline, Trellis2PipelineConfig,
-    Trellis2Rng, Trellis2RunOptions, Trellis2Stages, quantize_hr_coords,
-    quantize_hr_coords_with_stop,
-};
-pub use trellis2_tex::{
-    TexDecodeOutput, Trellis2PbrLayout, Trellis2TexDecoder, Trellis2TexDit, concat_tex_input,
-    pbr_attrs_from_raw, query_vertex_attrs, query_vertex_colors, split_pbr_attrs,
+    TRELLIS2_TEX_NOISE_SALT, TRELLIS2_TEX_SLAT_MEAN, TRELLIS2_TEX_SLAT_STD, TRELLIS2_VOXEL_MARGIN,
+    Trellis2CascadeShape, Trellis2Pipeline, Trellis2PipelineConfig, Trellis2Rng,
+    Trellis2RunOptions, Trellis2Stages, quantize_hr_coords, quantize_hr_coords_with_stop,
 };
 pub use trellis2_blocks::{
     Trellis2AdaLn, Trellis2CrossAttention, Trellis2DenseBlock, Trellis2FeedForward,
@@ -143,6 +140,10 @@ pub use trellis2_sparse::{
     spatial_to_channel,
 };
 pub use trellis2_ss_dec::{Trellis2SsDecoder, Trellis2SsDecoderConfig, occupancy_coords};
+pub use trellis2_tex::{
+    TexDecodeOutput, Trellis2PbrLayout, Trellis2TexDecoder, Trellis2TexDit, concat_tex_input,
+    pbr_attrs_from_raw, query_vertex_attrs, query_vertex_colors, split_pbr_attrs,
+};
 pub use trellis2_vae::{
     ShapeVaeBlockTrace, ShapeVaeDecodeOutput, Trellis2ShapeVaeConfig, Trellis2ShapeVaeDecoder,
     decode_shape_mesh, dual_grid_fields,
