@@ -16,12 +16,14 @@ pub use contracts::{
     Pi3InputSource, Pi3NeuralSpec, Pi3PreprocessSpec, Pi3xExportSpec, Pi3xGeometrySpec,
     Pi3xNeuralSpec, Pi3xPreprocessSpec, PreprocessSpec, RgbRange, RuntimeArchitecture,
     RuntimeGeometry, RuntimeTensorContract, SourceDisposition, SpatialSize, TensorDType,
-    TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec, TripoPreprocessSpec, TripoSgExportSpec,
-    TripoSgGeometrySpec, TripoSgMesh, TripoSgNeuralSpec, TripoSgPreparedImage,
-    TripoSgPreprocessSpec, TripoSgRawInput, TripoSgRmbgSpec, TripoSgRuntimeGeometry,
-    TripoSgSceneCode, VendorSource, VggtExportSpec, VggtGeometrySpec, VggtNeuralSpec,
-    VggtPointCloud, VggtPreparedBatch, VggtPreprocessSpec, VggtRawInput, VggtRuntimeGeometry,
-    VggtSceneCode,
+    Trellis2ExportSpec, Trellis2GeometrySpec, Trellis2Mesh, Trellis2NeuralSpec,
+    Trellis2PipelineType, Trellis2PreparedImage, Trellis2PreprocessSpec, Trellis2RawInput,
+    Trellis2RuntimeGeometry, TripoExportSpec, TripoGeometrySpec, TripoNeuralSpec,
+    TripoPreprocessSpec, TripoSgExportSpec, TripoSgGeometrySpec, TripoSgMesh, TripoSgNeuralSpec,
+    TripoSgPreparedImage, TripoSgPreprocessSpec, TripoSgRawInput, TripoSgRmbgSpec,
+    TripoSgRuntimeGeometry, TripoSgSceneCode, VendorSource, VggtExportSpec, VggtGeometrySpec,
+    VggtNeuralSpec, VggtPointCloud, VggtPreparedBatch, VggtPreprocessSpec, VggtRawInput,
+    VggtRuntimeGeometry, VggtSceneCode,
 };
 pub use error::{Lux3dError, Result};
 pub use runtime::{RmbgConfig, RmbgModel};

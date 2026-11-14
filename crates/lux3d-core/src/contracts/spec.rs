@@ -393,6 +393,68 @@ pub struct TripoSgExportSpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trellis2PreprocessSpec {
+    pub input_layout: String,
+    pub alpha_path: String,
+    pub no_alpha_behavior: String,
+    pub foreground_crop: String,
+    pub premultiply_alpha: bool,
+    pub target_sizes: Vec<u32>,
+    pub default_target_size: u32,
+    pub normalization: NormalizationStats,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trellis2NeuralSpec {
+    pub image_encoder: String,
+    pub image_encoder_layers: usize,
+    pub image_encoder_hidden: usize,
+    pub image_encoder_patch_size: usize,
+    pub image_encoder_registers: usize,
+    pub flow_dit_layers: usize,
+    pub flow_dit_width: usize,
+    pub flow_dit_heads: usize,
+    pub flow_dit_head_dim: usize,
+    pub cross_attention_dim: usize,
+    pub positional_encoding: String,
+    pub sparse_structure_latent_channels: usize,
+    pub sparse_structure_resolution: usize,
+    pub slat_latent_channels: usize,
+    pub shape_vae_decoder: String,
+    pub shape_vae_decoder_channels: Vec<usize>,
+    pub texture_vae_decoder: String,
+    pub texture_vae_decoder_output_channels: usize,
+    pub sampler: String,
+    pub default_steps: usize,
+    pub default_guidance_scale: f32,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trellis2GeometrySpec {
+    pub artifact_kind: String,
+    pub surface_extractor: String,
+    pub voxel_output_channels: usize,
+    pub coordinate_frame: String,
+    pub quad_split_rule: String,
+    pub supports_fill_holes: bool,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trellis2ExportSpec {
+    pub primary_extension: String,
+    pub alternate_extensions: Vec<String>,
+    pub utility_notes: Vec<String>,
+    pub source_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "family",
     content = "spec",
@@ -407,6 +469,8 @@ pub enum PreprocessSpec {
     #[serde(rename = "triposg")]
     TripoSg(TripoSgPreprocessSpec),
     Vggt(VggtPreprocessSpec),
+    #[serde(rename = "trellis2")]
+    Trellis2(Trellis2PreprocessSpec),
 }
 
 impl PreprocessSpec {
@@ -417,6 +481,7 @@ impl PreprocessSpec {
             Self::TripoSr(spec) => &spec.source_paths,
             Self::TripoSg(spec) => &spec.source_paths,
             Self::Vggt(spec) => &spec.source_paths,
+            Self::Trellis2(spec) => &spec.source_paths,
         }
     }
 }
@@ -436,6 +501,8 @@ pub enum NeuralSpec {
     #[serde(rename = "triposg")]
     TripoSg(TripoSgNeuralSpec),
     Vggt(VggtNeuralSpec),
+    #[serde(rename = "trellis2")]
+    Trellis2(Trellis2NeuralSpec),
 }
 
 impl NeuralSpec {
@@ -446,6 +513,7 @@ impl NeuralSpec {
             Self::TripoSr(spec) => &spec.source_paths,
             Self::TripoSg(spec) => &spec.source_paths,
             Self::Vggt(spec) => &spec.source_paths,
+            Self::Trellis2(spec) => &spec.source_paths,
         }
     }
 }
@@ -465,6 +533,8 @@ pub enum GeometrySpec {
     #[serde(rename = "triposg")]
     TripoSg(TripoSgGeometrySpec),
     Vggt(VggtGeometrySpec),
+    #[serde(rename = "trellis2")]
+    Trellis2(Trellis2GeometrySpec),
 }
 
 impl GeometrySpec {
@@ -475,6 +545,7 @@ impl GeometrySpec {
             Self::TripoSr(spec) => &spec.source_paths,
             Self::TripoSg(spec) => &spec.source_paths,
             Self::Vggt(spec) => &spec.source_paths,
+            Self::Trellis2(spec) => &spec.source_paths,
         }
     }
 }
@@ -494,6 +565,8 @@ pub enum ExportSpec {
     #[serde(rename = "triposg")]
     TripoSg(TripoSgExportSpec),
     Vggt(VggtExportSpec),
+    #[serde(rename = "trellis2")]
+    Trellis2(Trellis2ExportSpec),
 }
 
 impl ExportSpec {
@@ -504,6 +577,7 @@ impl ExportSpec {
             Self::TripoSr(spec) => &spec.source_paths,
             Self::TripoSg(spec) => &spec.source_paths,
             Self::Vggt(spec) => &spec.source_paths,
+            Self::Trellis2(spec) => &spec.source_paths,
         }
     }
 }
@@ -575,6 +649,19 @@ pub struct TripoSgRuntimeGeometry {
     pub default_flash_octree_depth: u32,
 }
 
+/// Minimal runtime-geometry contract for TRELLIS.2. Populated in full by the
+/// geometry task (dual-grid extraction); the variant exists so the family
+/// can serialize a contract document without reshaping the tagged enum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Trellis2RuntimeGeometry {
+    pub artifact_kind: String,
+    pub surface_extractor: String,
+    pub outputs: Vec<GeometryBufferContract>,
+    pub source_paths: Vec<String>,
+    pub notes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(
     tag = "family",
@@ -590,6 +677,8 @@ pub enum RuntimeGeometry {
     #[serde(rename = "triposg")]
     TripoSg(TripoSgRuntimeGeometry),
     Vggt(VggtRuntimeGeometry),
+    #[serde(rename = "trellis2")]
+    Trellis2(Trellis2RuntimeGeometry),
 }
 
 impl RuntimeGeometry {
@@ -600,6 +689,7 @@ impl RuntimeGeometry {
             Self::TripoSr(spec) => &spec.source_paths,
             Self::TripoSg(spec) => &spec.source_paths,
             Self::Vggt(spec) => &spec.source_paths,
+            Self::Trellis2(spec) => &spec.source_paths,
         }
     }
 }
