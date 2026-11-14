@@ -2,5 +2,6 @@ mod cli;
 
 pub use cli::{
     Cli, Command, Family, InjectCondition, InspectArgs, NormalizeArgs, QuantizeArgs, RunArgs,
-    WeightsArgs, WeightsCommand, inspect_model, normalize_weights, quantize_weights, run_model,
+    Trellis2PipelineKind, WeightsArgs, WeightsCommand, inspect_model, normalize_weights,
+    quantize_weights, run_model,
 };

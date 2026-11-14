@@ -132,3 +132,95 @@ fn run_model_rejects_triposg_only_flag_at_dispatch_before_weights() {
         "unexpected rejection message: {message}"
     );
 }
+
+#[test]
+fn run_trellis2_parses_family_and_run_overrides() {
+    let cli = Cli::parse_from(vec![
+        "lux3d".to_string(),
+        "run".to_string(),
+        "trellis2".to_string(),
+        "--source".to_string(),
+        "image.png".to_string(),
+        "--model-path".to_string(),
+        "models/TRELLIS.2-4B".to_string(),
+        "--pipeline-type".to_string(),
+        "1024_cascade".to_string(),
+        "--steps".to_string(),
+        "4".to_string(),
+        "--seed".to_string(),
+        "7".to_string(),
+        "--max-num-tokens".to_string(),
+        "8192".to_string(),
+        "--texture".to_string(),
+        "false".to_string(),
+        "--output".to_string(),
+        "out.glb".to_string(),
+    ]);
+
+    assert_eq!("trellis2", cli.command.family_name());
+    assert_eq!(Some(ModelFamily::Trellis2), cli.command.family());
+
+    let Command::Run(args) = cli.command else {
+        panic!("expected run command");
+    };
+    assert_eq!(ModelFamily::Trellis2, args.family.model_family());
+    assert_eq!(Some(4), args.steps);
+    assert_eq!(Some(7), args.seed);
+    assert_eq!(Some(8192), args.max_num_tokens);
+    assert_eq!(Some(false), args.texture);
+    assert_eq!(
+        Some(lux3d_core::Trellis2PipelineType::Cascade1024),
+        args.pipeline_type
+            .map(lux3d_core::Trellis2PipelineType::from)
+    );
+}
+
+#[test]
+fn run_trellis2_flags_default_to_none() {
+    let cli = Cli::parse_from(vec![
+        "lux3d".to_string(),
+        "run".to_string(),
+        "trellis2".to_string(),
+        "--source".to_string(),
+        "image.png".to_string(),
+        "--output".to_string(),
+        "out.obj".to_string(),
+    ]);
+
+    let Command::Run(args) = cli.command else {
+        panic!("expected run command");
+    };
+    assert_eq!(None, args.pipeline_type);
+    assert_eq!(None, args.max_num_tokens);
+    assert_eq!(None, args.texture);
+}
+
+/// TRELLIS.2 must reject foreign-family flags at dispatch BEFORE loading any
+/// weights, mirroring the TripoSG fail-fast behavior.
+#[test]
+fn run_model_rejects_trellis2_foreign_flag_at_dispatch_before_weights() {
+    let cli = Cli::parse_from(vec![
+        "lux3d".to_string(),
+        "run".to_string(),
+        "trellis2".to_string(),
+        "--device".to_string(),
+        "cpu".to_string(),
+        "--source".to_string(),
+        "does-not-exist.png".to_string(),
+        "--rmbg-model-path".to_string(),
+        "does-not-exist-rmbg".to_string(),
+        "--output".to_string(),
+        "out.glb".to_string(),
+    ]);
+
+    let Command::Run(args) = cli.command else {
+        panic!("expected run command");
+    };
+
+    let error = run_model(args).expect_err("`--rmbg-model-path` must be rejected for trellis2");
+    let message = error.to_string();
+    assert!(
+        message.contains("`--rmbg-model-path` is not supported for `trellis2`"),
+        "unexpected rejection message: {message}"
+    );
+}

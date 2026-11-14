@@ -2,18 +2,18 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand};
 use lux3d_core::runtime::{
-    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, TripoSgPipeline,
-    TripoSgRunOptions, TripoSrPipeline, VggtPipeline,
+    Pi3Pipeline, Pi3xInjectConditions, Pi3xPipeline, Pi3xVoPipeline, Trellis2Pipeline,
+    Trellis2RunOptions, TripoSgPipeline, TripoSgRunOptions, TripoSrPipeline, VggtPipeline,
 };
 use lux3d_core::{
-    ModelAssetOptions, ModelFamily, QuantizeOptions, WeightLocator, dtype_from_name,
-    ensure_canonical_weights, quantize_auxiliary_checkpoint, quantize_checkpoint,
+    ModelAssetOptions, ModelFamily, QuantizeOptions, Trellis2PipelineType, WeightLocator,
+    dtype_from_name, ensure_canonical_weights, quantize_auxiliary_checkpoint, quantize_checkpoint,
 };
 
 #[derive(Debug, Parser, PartialEq)]
 #[command(
     name = "lux3d",
-    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, TripoSR, VGGT, and TripoSG."
+    about = "CUDA-first runtime and weight tools for Pi3, Pi3X, TripoSR, VGGT, TripoSG, and TRELLIS.2."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -156,13 +156,19 @@ pub struct RunArgs {
     #[arg(long)]
     pub mc_threshold: Option<f32>,
 
-    #[arg(long, help = "TripoSG rectified-flow denoise steps (default 50).")]
+    #[arg(
+        long,
+        help = "Denoise steps (TripoSG rectified-flow default 50; TRELLIS.2 sparse-structure/shape/texture Euler default 12 each)."
+    )]
     pub steps: Option<usize>,
 
     #[arg(long, help = "TripoSG classifier-free guidance scale (default 7.0).")]
     pub guidance_scale: Option<f32>,
 
-    #[arg(long, help = "TripoSG latent-initialization seed (default 42).")]
+    #[arg(
+        long,
+        help = "TripoSG/TRELLIS.2 latent-initialization seed (default 42)."
+    )]
     pub seed: Option<u64>,
 
     #[arg(long, help = "TripoSG latent token count (default 2048).")]
@@ -190,6 +196,27 @@ pub struct RunArgs {
         help = "TripoSG flash octree depth used by the reference default flash path (default 9)."
     )]
     pub flash_octree_depth: Option<u32>,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "TRELLIS.2 pipeline type: `512`, `1024`, or `1024_cascade` (reference default). The single-resolution `1024` path is not implemented yet."
+    )]
+    pub pipeline_type: Option<Trellis2PipelineKind>,
+
+    #[arg(
+        long,
+        help = "TRELLIS.2 cascade token budget; the reference loop always decodes at 1024 (default 49152)."
+    )]
+    pub max_num_tokens: Option<usize>,
+
+    #[arg(
+        long,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        help = "TRELLIS.2 texture stages: texture SLAT + guided VAE + PBR vertex colors (reference default: true). Pass --texture false for geometry-only output."
+    )]
+    pub texture: Option<bool>,
 
     #[arg(
         long,
@@ -229,6 +256,31 @@ pub enum Family {
     Triposr,
     Triposg,
     Vggt,
+    /// TRELLIS.2-4B image-to-3D: preprocess -> DINOv3 -> SS flow -> shape SLAT
+    /// (512 or 1024 cascade) -> texture SLAT -> dual-grid mesh + PBR sidecar.
+    Trellis2,
+}
+
+/// TRELLIS.2 pipeline variant (`--pipeline-type`); names mirror the reference
+/// config strings (`512`, `1024`, `1024_cascade`).
+#[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
+pub enum Trellis2PipelineKind {
+    #[value(name = "512")]
+    R512,
+    #[value(name = "1024")]
+    R1024,
+    #[value(name = "1024_cascade")]
+    Cascade1024,
+}
+
+impl From<Trellis2PipelineKind> for Trellis2PipelineType {
+    fn from(kind: Trellis2PipelineKind) -> Self {
+        match kind {
+            Trellis2PipelineKind::R512 => Self::R512,
+            Trellis2PipelineKind::R1024 => Self::R1024,
+            Trellis2PipelineKind::Cascade1024 => Self::Cascade1024,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum, PartialEq, Eq)]
@@ -352,6 +404,7 @@ impl Family {
             Self::Triposr => ModelFamily::TripoSr,
             Self::Triposg => ModelFamily::TripoSg,
             Self::Vggt => ModelFamily::Vggt,
+            Self::Trellis2 => ModelFamily::Trellis2,
         }
     }
 }
@@ -365,6 +418,7 @@ impl Command {
                 Family::Triposr => "triposr",
                 Family::Triposg => "triposg",
                 Family::Vggt => "vggt",
+                Family::Trellis2 => "trellis2",
             },
             Self::Weights(args) => match args.command {
                 WeightsCommand::Normalize(ref family) => match family.family {
@@ -373,6 +427,7 @@ impl Command {
                     Family::Triposr => "triposr",
                     Family::Triposg => "triposg",
                     Family::Vggt => "vggt",
+                    Family::Trellis2 => "trellis2",
                 },
                 WeightsCommand::Quantize(ref args) => {
                     if let Some(aux) = args.aux_family.as_deref() {
@@ -384,6 +439,7 @@ impl Command {
                         Some(Family::Triposr) => "triposr",
                         Some(Family::Triposg) => "triposg",
                         Some(Family::Vggt) => "vggt",
+                        Some(Family::Trellis2) => "trellis2",
                         None => "aux",
                     }
                 }
@@ -394,6 +450,7 @@ impl Command {
                 Family::Triposr => "triposr",
                 Family::Triposg => "triposg",
                 Family::Vggt => "vggt",
+                Family::Trellis2 => "trellis2",
             },
         }
     }
@@ -589,6 +646,11 @@ pub fn run_model(args: RunArgs) -> anyhow::Result<PathBuf> {
                 args.dump_npz.as_deref(),
                 &device,
             )?
+        }
+        ModelFamily::Trellis2 => {
+            reject_unsupported_trellis2_options(&args)?;
+            let options = trellis2_run_options_from_args(&args)?;
+            run_trellis2(model_assets, &args.source, options, &args.output, &device)?
         }
     }
 
@@ -806,6 +868,90 @@ fn resolve_rmbg_model_path(args: &RunArgs) -> Option<PathBuf> {
         .filter(|candidate| candidate.is_dir())
 }
 
+/// TRELLIS.2 exposes image-to-mesh diffusion + texture only. Reject the
+/// Pi3/Pi3X/VGGT conditioning and point-cloud options, the TripoSR
+/// marching-cubes knobs, the TripoSG octree/flash/latent knobs it does not
+/// share, and the RMBG package (a documented TRELLIS.2 slice exclusion:
+/// RGB input is treated as fully opaque) instead of silently ignoring them.
+/// `--steps`/`--seed`/`--pipeline-type`/`--max-num-tokens`/`--texture` stay
+/// allowed; `--guidance-scale` has no runtime override (sampler guidance comes
+/// from `pipeline.json`/defaults).
+fn reject_unsupported_trellis2_options(args: &RunArgs) -> anyhow::Result<()> {
+    if args.interval.is_some() {
+        anyhow::bail!("`--interval` is not supported for `trellis2`");
+    }
+    if args.conditions.is_some() {
+        anyhow::bail!("`--conditions` is not supported for `trellis2`");
+    }
+    if args.vo {
+        anyhow::bail!("`--vo` is not supported for `trellis2`");
+    }
+    if args.chunk_size.is_some() {
+        anyhow::bail!("`--chunk-size` is not supported for `trellis2`");
+    }
+    if args.overlap.is_some() {
+        anyhow::bail!("`--overlap` is not supported for `trellis2`");
+    }
+    if args.conf_threshold.is_some() {
+        anyhow::bail!("`--conf-threshold` is not supported for `trellis2`");
+    }
+    if !args.inject_condition.is_empty() {
+        anyhow::bail!("`--inject-condition` is not supported for `trellis2`");
+    }
+    if args.mc_resolution.is_some() {
+        anyhow::bail!("`--mc-resolution` is not supported for `trellis2`");
+    }
+    if args.mc_threshold.is_some() {
+        anyhow::bail!("`--mc-threshold` is not supported for `trellis2`");
+    }
+    if args.guidance_scale.is_some() {
+        anyhow::bail!("`--guidance-scale` is not supported for `trellis2`");
+    }
+    if args.num_tokens.is_some() {
+        anyhow::bail!("`--num-tokens` is not supported for `trellis2`; use `--max-num-tokens`");
+    }
+    if args.dense_octree_depth.is_some() {
+        anyhow::bail!("`--dense-octree-depth` is not supported for `trellis2`");
+    }
+    if args.hierarchical_octree_depth.is_some() {
+        anyhow::bail!("`--hierarchical-octree-depth` is not supported for `trellis2`");
+    }
+    if args.flash_decoder.is_some() {
+        anyhow::bail!("`--flash-decoder` is not supported for `trellis2`");
+    }
+    if args.flash_octree_depth.is_some() {
+        anyhow::bail!("`--flash-octree-depth` is not supported for `trellis2`");
+    }
+    if args.rmbg_model_path.is_some() {
+        anyhow::bail!(
+            "`--rmbg-model-path` is not supported for `trellis2`; RMBG background removal is a \
+             documented exclusion and RGB input is treated as fully opaque"
+        );
+    }
+    Ok(())
+}
+
+/// Build the TRELLIS.2 run options from the reference defaults plus explicit
+/// CLI overrides. `--steps` feeds all three Euler samplers (sparse-structure,
+/// shape, texture); `--guidance-scale` has no runtime override.
+fn trellis2_run_options_from_args(args: &RunArgs) -> anyhow::Result<Trellis2RunOptions> {
+    let defaults = Trellis2RunOptions::default();
+    let options = Trellis2RunOptions {
+        seed: args.seed.unwrap_or(defaults.seed),
+        pipeline_type: args
+            .pipeline_type
+            .map(Trellis2PipelineType::from)
+            .unwrap_or(defaults.pipeline_type),
+        ss_steps: args.steps.unwrap_or(defaults.ss_steps),
+        shape_steps: args.steps.unwrap_or(defaults.shape_steps),
+        tex_steps: args.steps.unwrap_or(defaults.tex_steps),
+        with_texture: args.texture.unwrap_or(defaults.with_texture),
+        max_num_tokens: args.max_num_tokens.unwrap_or(defaults.max_num_tokens),
+        preprocess: defaults.preprocess,
+    };
+    Ok(options)
+}
+
 /// Build the TripoSG run options from the reference defaults plus explicit
 /// CLI overrides; `--chunk-size` doubles as the SDF query chunk.
 fn triposg_run_options_from_args(args: &RunArgs) -> anyhow::Result<TripoSgRunOptions> {
@@ -1000,6 +1146,63 @@ fn run_triposg(
     pipeline.export_mesh(&mesh, output)?;
     if stage_time {
         eprintln!("[stage] export: {:.2}s", t3.elapsed().as_secs_f64());
+    }
+    Ok(())
+}
+
+/// Load the TRELLIS.2 pipeline from `--model-path`. A raw TRELLIS.2 checkpoint
+/// directory (`pipeline.json` + `ckpts/`, i.e. the upstream
+/// `models/TRELLIS.2-4B` layout) uses the per-stage raw loader; anything else
+/// (canonical package dir, GGUF, or HF cache auto-download) goes through the
+/// canonical weights path.
+fn load_trellis2_pipeline(
+    model_assets: &ModelAssetOptions,
+    device: &candle_core::Device,
+) -> anyhow::Result<Trellis2Pipeline> {
+    if let Some(dir) = &model_assets.canonical_dir {
+        let looks_raw =
+            dir.is_dir() && (dir.join("pipeline.json").is_file() || dir.join("ckpts").is_dir());
+        if looks_raw {
+            return Trellis2Pipeline::load_from_raw_dir(dir, device).map_err(anyhow::Error::from);
+        }
+    }
+    Trellis2Pipeline::load(model_assets.clone()).map_err(anyhow::Error::from)
+}
+
+fn run_trellis2(
+    model_assets: ModelAssetOptions,
+    source: &Path,
+    options: Trellis2RunOptions,
+    output: &Path,
+    device: &candle_core::Device,
+) -> anyhow::Result<()> {
+    let stage_time = std::env::var_os("LUX3D_STAGE_TIME").is_some();
+    let t0 = std::time::Instant::now();
+    let pipeline = load_trellis2_pipeline(&model_assets, device)?;
+    if stage_time {
+        eprintln!("[stage] load: {:.2}s", t0.elapsed().as_secs_f64());
+    }
+    let t1 = std::time::Instant::now();
+    let stages = pipeline
+        .run_from_path_with_stages(source, device, &options)
+        .map_err(anyhow::Error::from)?;
+    if stage_time {
+        eprintln!("[stage] infer: {:.2}s", t1.elapsed().as_secs_f64());
+    }
+    let t2 = std::time::Instant::now();
+    let mesh = stages.mesh.expect("trellis2 run always produces a mesh");
+    if options.with_texture && mesh.voxel_attr_channels == lux3d_core::export::pbrvox::CHANNELS {
+        let sidecar = pipeline
+            .export_mesh_with_pbr(&mesh, output)
+            .map_err(anyhow::Error::from)?;
+        eprintln!("[export] pbr sidecar: {}", sidecar.display());
+    } else {
+        pipeline
+            .export_mesh(&mesh, output)
+            .map_err(anyhow::Error::from)?;
+    }
+    if stage_time {
+        eprintln!("[stage] export: {:.2}s", t2.elapsed().as_secs_f64());
     }
     Ok(())
 }
@@ -1240,6 +1443,184 @@ mod tests {
         assert!(!options.use_flash_decoder);
         assert_eq!(7, options.flash_octree_depth);
         assert_eq!(4096, options.query_chunk_size);
+    }
+
+    #[test]
+    fn routes_run_trellis2_family_with_reference_defaults() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "trellis2",
+            "--source",
+            "image.png",
+            "--output",
+            "out.glb",
+        ]);
+        assert_eq!("trellis2", cli.command.family_name());
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(ModelFamily::Trellis2, args.family.model_family());
+        super::reject_unsupported_trellis2_options(&args).expect("default trellis2 options");
+        let options =
+            super::trellis2_run_options_from_args(&args).expect("default trellis2 run options");
+        assert_eq!(super::Trellis2RunOptions::default(), options);
+        let defaults = super::Trellis2RunOptions::default();
+        assert_eq!(
+            (
+                42u64,
+                "1024_cascade",
+                12usize,
+                12usize,
+                12usize,
+                true,
+                49152usize
+            ),
+            (
+                defaults.seed,
+                defaults.pipeline_type.as_str(),
+                defaults.ss_steps,
+                defaults.shape_steps,
+                defaults.tex_steps,
+                defaults.with_texture,
+                defaults.max_num_tokens
+            )
+        );
+    }
+
+    #[test]
+    fn trellis2_run_options_map_cli_overrides() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "trellis2",
+            "--source",
+            "image.png",
+            "--output",
+            "out.glb",
+            "--pipeline-type",
+            "512",
+            "--steps",
+            "4",
+            "--seed",
+            "7",
+            "--max-num-tokens",
+            "8192",
+            "--texture",
+            "false",
+            "--model-path",
+            "models/TRELLIS.2-4B",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(Some(super::Family::Trellis2), Some(args.family));
+        assert_eq!(Some(4), args.steps);
+        assert_eq!(Some(7), args.seed);
+        assert_eq!(Some(8192), args.max_num_tokens);
+        assert_eq!(Some(false), args.texture);
+        let options = super::trellis2_run_options_from_args(&args).expect("trellis2 run options");
+        assert_eq!(7, options.seed);
+        assert_eq!(super::Trellis2PipelineType::R512, options.pipeline_type);
+        assert_eq!(4, options.ss_steps);
+        assert_eq!(4, options.shape_steps);
+        assert_eq!(4, options.tex_steps);
+        assert!(!options.with_texture);
+        assert_eq!(8192, options.max_num_tokens);
+    }
+
+    #[test]
+    fn trellis2_pipeline_type_accepts_reference_names() {
+        for (name, expected) in [
+            ("512", super::Trellis2PipelineType::R512),
+            ("1024", super::Trellis2PipelineType::R1024),
+            ("1024_cascade", super::Trellis2PipelineType::Cascade1024),
+        ] {
+            let cli = Cli::parse_from([
+                "lux3d",
+                "run",
+                "trellis2",
+                "--source",
+                "image.png",
+                "--pipeline-type",
+                name,
+                "--output",
+                "out.glb",
+            ]);
+            let Command::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+            let options = super::trellis2_run_options_from_args(&args).expect("run options");
+            assert_eq!(expected, options.pipeline_type, "pipeline type `{name}`");
+        }
+    }
+
+    #[test]
+    fn trellis2_texture_flag_defaults_to_true_without_value() {
+        let cli = Cli::parse_from([
+            "lux3d",
+            "run",
+            "trellis2",
+            "--source",
+            "image.png",
+            "--texture",
+            "--output",
+            "out.glb",
+        ]);
+        let Command::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(Some(true), args.texture);
+        let options = super::trellis2_run_options_from_args(&args).expect("run options");
+        assert!(options.with_texture);
+    }
+
+    #[test]
+    fn run_trellis2_rejects_foreign_family_options() {
+        let flag_options: [(&str, &[&str]); 15] = [
+            ("--interval", &["--interval", "2"]),
+            ("--conditions", &["--conditions", "conditions.npz"]),
+            ("--vo", &["--vo"]),
+            ("--chunk-size", &["--chunk-size", "8"]),
+            ("--overlap", &["--overlap", "4"]),
+            ("--conf-threshold", &["--conf-threshold", "0.5"]),
+            ("--inject-condition", &["--inject-condition", "pose"]),
+            ("--mc-resolution", &["--mc-resolution", "256"]),
+            ("--mc-threshold", &["--mc-threshold", "25.0"]),
+            ("--guidance-scale", &["--guidance-scale", "3.5"]),
+            ("--num-tokens", &["--num-tokens", "1024"]),
+            ("--dense-octree-depth", &["--dense-octree-depth", "8"]),
+            (
+                "--hierarchical-octree-depth",
+                &["--hierarchical-octree-depth", "9"],
+            ),
+            ("--flash-decoder", &["--flash-decoder", "false"]),
+            ("--rmbg-model-path", &["--rmbg-model-path", "rmbg-1.4"]),
+        ];
+        for (flag, extra) in flag_options {
+            let mut argv = vec![
+                "lux3d",
+                "run",
+                "trellis2",
+                "--source",
+                "image.png",
+                "--output",
+                "out.glb",
+            ];
+            argv.extend_from_slice(extra);
+            let cli = Cli::parse_from(argv);
+            let Command::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+            let error = super::reject_unsupported_trellis2_options(&args)
+                .expect_err(&format!("{flag} must be rejected for trellis2"));
+            let message = error.to_string();
+            assert!(
+                message.contains("is not supported for `trellis2`"),
+                "unexpected message for {flag}: `{message}`"
+            );
+            assert!(message.contains(flag), "`{flag}` missing in `{message}`");
+        }
     }
 
     #[test]
@@ -1618,6 +1999,9 @@ mod tests {
             cache_dir: None,
             output: output.clone(),
             dump_npz: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         };
 
         let emitted = run_model(args).expect("pi3 cli run");
@@ -1664,6 +2048,9 @@ mod tests {
             cache_dir: None,
             output: output.clone(),
             dump_npz: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         };
 
         let emitted = run_model(args).expect("triposr cli run");
@@ -1712,6 +2099,9 @@ mod tests {
             cache_dir: None,
             output,
             dump_npz: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         };
 
         let err = run_model(args).expect_err("invalid marching-cubes resolution must fail");
@@ -1766,6 +2156,9 @@ mod tests {
             cache_dir: None,
             output: output.clone(),
             dump_npz: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         };
 
         let emitted = run_model(args).expect("pi3x cli run");
@@ -1816,6 +2209,9 @@ mod tests {
             cache_dir: None,
             output: output.clone(),
             dump_npz: None,
+            pipeline_type: None,
+            max_num_tokens: None,
+            texture: None,
         };
 
         let emitted = run_model(args).expect("pi3x vo cli run");
