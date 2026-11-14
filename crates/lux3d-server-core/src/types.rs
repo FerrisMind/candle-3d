@@ -50,6 +50,10 @@ pub struct Lux3dState {
     /// Optional separate RMBG-1.4 canonical package (BRIA license). The
     /// TripoSG pipeline needs it for inputs without a valid alpha channel.
     pub rmbg_model_path: Option<PathBuf>,
+    /// Optional separate RMBG-2.0/BiRefNet canonical package (CC-BY-NC).
+    /// The TRELLIS.2 pipeline needs it for inputs without a valid alpha
+    /// channel.
+    pub trellis2_rmbg_model_path: Option<PathBuf>,
     pub cuda_device: usize,
     pub backend: DeviceBackend,
     pub upload_dir: PathBuf,
@@ -70,6 +74,7 @@ impl Lux3dState {
     pub(crate) fn new(
         model_assets: ModelAssetOptions,
         rmbg_model_path: Option<PathBuf>,
+        trellis2_rmbg_model_path: Option<PathBuf>,
         cuda_device: usize,
         backend: DeviceBackend,
         upload_dir: PathBuf,
@@ -84,6 +89,7 @@ impl Lux3dState {
         Self {
             model_assets,
             rmbg_model_path,
+            trellis2_rmbg_model_path,
             cuda_device,
             backend,
             upload_dir,

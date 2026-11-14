@@ -29,6 +29,9 @@ struct Args {
     #[arg(long, env = "LUX3D_RMBG_MODEL_PATH")]
     rmbg_model_path: Option<PathBuf>,
 
+    #[arg(long, env = "LUX3D_TRELLIS2_RMBG_MODEL_PATH")]
+    trellis2_rmbg_model_path: Option<PathBuf>,
+
     #[arg(long, default_value_t = 0)]
     cuda_device: usize,
 
@@ -102,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         .with_model_path_optional(args.model_path)
         .with_cache_dir_optional(args.cache_dir)
         .with_rmbg_model_path_optional(args.rmbg_model_path)
+        .with_trellis2_rmbg_model_path_optional(args.trellis2_rmbg_model_path)
         .with_cuda_device(args.cuda_device)
         .with_upload_dir_optional(args.upload_dir)
         .with_job_ttl_secs(args.job_ttl_secs)

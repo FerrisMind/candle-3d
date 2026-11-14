@@ -24,6 +24,7 @@ pub struct Lux3dForServerBuilder {
     model_path: Option<PathBuf>,
     cache_dir: Option<PathBuf>,
     rmbg_model_path: Option<PathBuf>,
+    trellis2_rmbg_model_path: Option<PathBuf>,
     cuda_device: usize,
     backend: Option<DeviceBackend>,
     upload_dir: Option<PathBuf>,
@@ -37,6 +38,7 @@ impl Default for Lux3dForServerBuilder {
             model_path: defaults::MODEL_PATH,
             cache_dir: defaults::CACHE_DIR,
             rmbg_model_path: None,
+            trellis2_rmbg_model_path: None,
             cuda_device: defaults::CUDA_DEVICE,
             backend: None,
             upload_dir: defaults::UPLOAD_DIR,
@@ -87,6 +89,28 @@ impl Lux3dForServerBuilder {
     pub fn with_rmbg_model_path_optional(mut self, rmbg_model_path: Option<PathBuf>) -> Self {
         if let Some(rmbg_model_path) = rmbg_model_path {
             self = self.with_rmbg_model_path(rmbg_model_path);
+        }
+        self
+    }
+
+    /// Set the separate RMBG-2.0/BiRefNet canonical package used by
+    /// TRELLIS.2 for images without a valid alpha channel. When unset, a
+    /// sibling `rmbg-2.0` or raw `RMBG-2.0` directory next to an explicit
+    /// `--model-path` is discovered automatically.
+    pub fn with_trellis2_rmbg_model_path(
+        mut self,
+        trellis2_rmbg_model_path: impl Into<PathBuf>,
+    ) -> Self {
+        self.trellis2_rmbg_model_path = Some(trellis2_rmbg_model_path.into());
+        self
+    }
+
+    pub fn with_trellis2_rmbg_model_path_optional(
+        mut self,
+        trellis2_rmbg_model_path: Option<PathBuf>,
+    ) -> Self {
+        if let Some(trellis2_rmbg_model_path) = trellis2_rmbg_model_path {
+            self = self.with_trellis2_rmbg_model_path(trellis2_rmbg_model_path);
         }
         self
     }
@@ -154,6 +178,13 @@ impl Lux3dForServerBuilder {
                 .map(|parent| parent.join("rmbg-1.4"))
                 .filter(|candidate| candidate.is_dir())
         });
+        let trellis2_rmbg_model_path = self.trellis2_rmbg_model_path.or_else(|| {
+            let parent = self.model_path.as_ref().and_then(|path| path.parent())?;
+            ["rmbg-2.0", "RMBG-2.0"]
+                .iter()
+                .map(|name| parent.join(name))
+                .find(|candidate| candidate.is_dir())
+        });
         let model_assets = ModelAssetOptions {
             canonical_dir: self.model_path,
             cache_dir: self.cache_dir,
@@ -164,6 +195,7 @@ impl Lux3dForServerBuilder {
         Ok(std::sync::Arc::new(Lux3dState::new(
             model_assets,
             rmbg_model_path,
+            trellis2_rmbg_model_path,
             self.cuda_device,
             backend,
             upload_dir,

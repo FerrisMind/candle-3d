@@ -112,10 +112,22 @@ impl ModelRegistry {
             ),
             // TRELLIS.2 loads from the canonical package only (the raw
             // `models/TRELLIS.2-4B` checkpoint layout is a CLI-only loader).
-            // Stage weights are mmap-backed and touched lazily per stage.
-            "trellis2" => CachedPipeline::Trellis2(
-                Trellis2Pipeline::load(assets).context("failed to load trellis2 pipeline")?,
-            ),
+            // Stage weights are mmap-backed and touched lazily per stage. The
+            // reference runs RMBG-2.0 for RGB inputs, so keep the separate
+            // remover resident on the request device.
+            "trellis2" => {
+                let device = state
+                    .device()
+                    .context("failed to initialize device for trellis2 RMBG-2.0")?;
+                CachedPipeline::Trellis2(
+                    Trellis2Pipeline::load_with_rmbg(
+                        assets,
+                        state.trellis2_rmbg_model_path.as_deref(),
+                        &device,
+                    )
+                    .context("failed to load trellis2 pipeline")?,
+                )
+            }
             "vggt" => CachedPipeline::Vggt(
                 VggtPipeline::load(assets).context("failed to load vggt pipeline")?,
             ),
